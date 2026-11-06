@@ -5,6 +5,16 @@ from backend.models.lead import Lead, LeadStatus, ConsentStatus
 from backend.models.lead_source import LeadSource, SourceType
 from backend.models.webhook_event import WebhookEvent
 from backend.models.potential_duplicate import PotentialDuplicateMatch, DuplicateReviewStatus
+from backend.models.conversation import (
+    Conversation,
+    ChannelType,
+    ConversationStatus,
+    OwnershipStatus,
+    ConversationLanguage,
+    ConversationState,
+)
+from backend.models.message import Message, SenderType, MessageType
+from backend.models.buyer_session import BuyerSession
 
 __all__ = [
     "Base",
@@ -20,4 +30,14 @@ __all__ = [
     "WebhookEvent",
     "PotentialDuplicateMatch",
     "DuplicateReviewStatus",
+    "Conversation",
+    "ChannelType",
+    "ConversationStatus",
+    "OwnershipStatus",
+    "ConversationLanguage",
+    "ConversationState",
+    "Message",
+    "SenderType",
+    "MessageType",
+    "BuyerSession",
 ]

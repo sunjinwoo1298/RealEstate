@@ -11,7 +11,10 @@ from backend.core.config import settings
 from backend.core.database import get_db
 from backend.core.exceptions import ForbiddenException, UnauthorizedException
 from backend.core.security import decode_access_token
+from backend.models.conversation import Conversation
 from backend.models.user import User, UserRole
+from backend.services.buyer_session_service import BuyerSessionService
+from backend.services.conversation_service import ConversationService
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -68,6 +71,24 @@ def require_roles(*allowed_roles: UserRole) -> Callable:
         return current_user
 
     return _dependency
+
+
+async def get_buyer_conversation(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> Conversation:
+    """
+    Resolves the authorized buyer conversation from the buyer session cookie.
+    Never trusts a caller-supplied lead or conversation id for authorization;
+    the session cookie is the sole source of buyer identity and must match
+    the conversation being accessed (enforced by callers via conversation.id).
+    """
+    raw_token = request.cookies.get(settings.BUYER_SESSION_COOKIE_NAME)
+    if not raw_token:
+        raise UnauthorizedException("No active chat session")
+
+    session = await BuyerSessionService.validate_session(db, raw_token)
+    return await ConversationService.get_conversation_by_id(db, session.conversation_id)
 
 
 def verify_same_origin(request: Request) -> None:

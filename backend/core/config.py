@@ -76,6 +76,15 @@ class Settings(BaseSettings):
     CSV_IMPORT_MAX_FILE_SIZE_BYTES: int = Field(default=2_000_000, description="Maximum accepted CSV import file size in bytes")
     CSV_IMPORT_MAX_ROWS: int = Field(default=2000, description="Maximum accepted CSV import row count")
 
+    # Buyer chat / conversations
+    BUYER_SESSION_COOKIE_NAME: str = Field(default="estateflow_buyer_session", description="Buyer chat session cookie name")
+    BUYER_SESSION_EXPIRE_HOURS: int = Field(default=72, description="Buyer chat session lifetime in hours")
+    CHAT_MESSAGE_MAX_LENGTH: int = Field(default=4000, description="Maximum accepted buyer/staff chat message length")
+    CHAT_SESSION_RATE_LIMIT_MAX_ATTEMPTS: int = Field(default=10, description="Max buyer session-creation attempts per window per IP")
+    CHAT_SESSION_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=300, description="Buyer session-creation rate limit window in seconds")
+    CHAT_MESSAGE_RATE_LIMIT_MAX_ATTEMPTS: int = Field(default=30, description="Max buyer messages per window per conversation")
+    CHAT_MESSAGE_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, description="Buyer message rate limit window in seconds")
+
     model_config = SettingsConfigDict(
         env_file=(
             ".env.local",
