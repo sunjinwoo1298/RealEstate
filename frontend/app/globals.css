@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root {
+  --brand-primary: #173B35;
+  --brand-secondary: #315C50;
+  --accent: #C47A55;
+  --background: #F7F6F2;
+  --surface: #FFFFFF;
+  --surface-muted: #F0F1EC;
+  --sidebar: #142F2B;
+  --border: #E5E5DE;
+  --text-primary: #202B28;
+  --text-secondary: #737C76;
+  --status-success: #27845B;
+  --status-warning: #B7791F;
+  --status-danger: #C34D4D;
+  --status-info: #4779A8;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-heading: "Manrope", "Inter", sans-serif;
+}
+
+@theme inline {
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-secondary: var(--brand-secondary);
+  --color-accent: var(--accent);
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-sidebar: var(--sidebar);
+  --color-border: var(--border);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-success: var(--status-success);
+  --color-warning: var(--status-warning);
+  --color-danger: var(--status-danger);
+  --color-info: var(--status-info);
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}

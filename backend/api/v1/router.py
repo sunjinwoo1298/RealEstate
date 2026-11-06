@@ -1,0 +1,11 @@
+from fastapi import APIRouter
+from backend.api.v1.endpoints.health import router as health_router
+from backend.api.v1.endpoints.auth import router as auth_router
+from backend.api.v1.endpoints.admin_users import router as admin_users_router
+from backend.api.v1.endpoints.leads import router as leads_router
+
+api_v1_router = APIRouter()
+api_v1_router.include_router(health_router)
+api_v1_router.include_router(auth_router)
+api_v1_router.include_router(admin_users_router)
+api_v1_router.include_router(leads_router)

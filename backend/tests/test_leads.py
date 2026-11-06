@@ -1,0 +1,291 @@
+import asyncio
+import hashlib
+import hmac
+import json
+import uuid
+
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy import delete
+
+from backend.main import app
+from backend.core.config import settings
+from backend.core.database import get_session_factory
+from backend.core.security import hash_password
+from backend.models.auth_session import AuthSession
+from backend.models.lead import Lead
+from backend.models.lead_source import LeadSource
+from backend.models.potential_duplicate import PotentialDuplicateMatch
+from backend.models.user import User, UserRole
+from backend.models.webhook_event import WebhookEvent
+
+ADMIN_EMAIL = "test-leads-admin@estateflow.ai"
+MANAGER_EMAIL = "test-leads-manager@estateflow.ai"
+EXEC_EMAIL = "test-leads-exec@estateflow.ai"
+PASSWORD = "SuperSecret123!"
+
+WEBSITE_SECRET = settings.webhook_source_secrets_map["WEBSITE"]
+
+
+@pytest_asyncio.fixture
+async def db_session():
+    factory = get_session_factory()
+    async with factory() as session:
+        yield session
+
+
+@pytest_asyncio.fixture
+async def seeded_users(db_session):
+    emails = [ADMIN_EMAIL, MANAGER_EMAIL, EXEC_EMAIL]
+    await db_session.execute(delete(User).where(User.email.in_(emails)))
+    await db_session.commit()
+
+    admin = User(email=ADMIN_EMAIL, full_name="Leads Admin", password_hash=hash_password(PASSWORD), role=UserRole.ADMIN, is_active=True)
+    manager = User(email=MANAGER_EMAIL, full_name="Leads Manager", password_hash=hash_password(PASSWORD), role=UserRole.MANAGER, is_active=True)
+    exec_user = User(email=EXEC_EMAIL, full_name="Leads Exec", password_hash=hash_password(PASSWORD), role=UserRole.SALES_EXECUTIVE, is_active=True)
+    db_session.add_all([admin, manager, exec_user])
+    await db_session.commit()
+
+    yield {"admin": admin, "manager": manager, "exec": exec_user}
+
+    await db_session.execute(delete(AuthSession).where(AuthSession.user_id.in_([admin.id, manager.id, exec_user.id])))
+    await db_session.execute(delete(User).where(User.email.in_(emails)))
+    await db_session.commit()
+
+
+@pytest_asyncio.fixture
+async def client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def _login(client, email):
+    resp = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
+    assert resp.status_code == 200
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def cleanup_leads(db_session):
+    yield
+    await db_session.execute(delete(PotentialDuplicateMatch))
+    await db_session.execute(delete(WebhookEvent))
+    await db_session.execute(delete(LeadSource))
+    await db_session.execute(delete(Lead))
+    await db_session.commit()
+
+
+def _sign(body: bytes, secret: str = WEBSITE_SECRET) -> str:
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_manual_lead_creation(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    resp = await client.post(
+        "/api/v1/leads",
+        headers=headers,
+        json={"full_name": "Ramesh Kumar", "phone": "9876543210", "email": "ramesh@example.com"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["created_new_lead"] is True
+    assert data["match_reason"] == "NEW_BUYER"
+
+
+@pytest.mark.asyncio
+async def test_existing_buyer_matched_by_phone(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    first = await client.post(
+        "/api/v1/leads", headers=headers, json={"full_name": "Suresh Mehta", "phone": "9123456780"}
+    )
+    second = await client.post(
+        "/api/v1/leads", headers=headers, json={"full_name": "Suresh M.", "phone": "+919123456780"}
+    )
+    assert first.status_code == 201 and second.status_code == 201
+    assert second.json()["match_reason"] == "EXACT_PHONE"
+    assert second.json()["lead_id"] == first.json()["lead_id"]
+
+
+@pytest.mark.asyncio
+async def test_existing_buyer_matched_by_email(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    first = await client.post(
+        "/api/v1/leads",
+        headers=headers,
+        json={"full_name": "Priya Nair", "phone": "9000000001", "email": "Priya@Example.com"},
+    )
+    second = await client.post(
+        "/api/v1/leads",
+        headers=headers,
+        json={"full_name": "Priya Nair", "phone": "9000000002", "email": "priya@example.com"},
+    )
+    assert second.json()["match_reason"] == "EXACT_EMAIL"
+    assert second.json()["lead_id"] == first.json()["lead_id"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_phone_rejected(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    resp = await client.post("/api/v1/leads", headers=headers, json={"full_name": "Bad Phone", "phone": "123"})
+    assert resp.status_code in (400, 422)
+
+
+@pytest.mark.asyncio
+async def test_invalid_email_rejected(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    resp = await client.post(
+        "/api/v1/leads", headers=headers, json={"full_name": "Bad Email", "phone": "9876500000", "email": "not-an-email"}
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_similar_names_different_identities_no_merge(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    first = await client.post("/api/v1/leads", headers=headers, json={"full_name": "Hardik Patel", "phone": "9111111111"})
+    second = await client.post("/api/v1/leads", headers=headers, json={"full_name": "Nidhi Shah", "phone": "9222222222"})
+    assert first.json()["lead_id"] != second.json()["lead_id"]
+    assert second.json()["match_reason"] == "NEW_BUYER"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_name_similarity_creates_duplicate_review(client, seeded_users):
+    headers = await _login(client, MANAGER_EMAIL)
+    first = await client.post("/api/v1/leads", headers=headers, json={"full_name": "Rajesh Kumar Shah", "phone": "9333333331"})
+    second = await client.post("/api/v1/leads", headers=headers, json={"full_name": "Rajesh Kumar Shaha", "phone": "9333333332"})
+    assert first.json()["lead_id"] != second.json()["lead_id"]
+
+    dup_resp = await client.get("/api/v1/leads/duplicates", headers=headers)
+    assert dup_resp.status_code == 200
+    items = dup_resp.json()["items"]
+    assert any(item["new_lead_id"] == second.json()["lead_id"] for item in items)
+
+    match_id = next(item["id"] for item in items if item["new_lead_id"] == second.json()["lead_id"])
+    review_resp = await client.patch(
+        f"/api/v1/leads/duplicates/{match_id}", headers=headers, json={"status": "REJECTED"}
+    )
+    assert review_resp.status_code == 200
+    assert review_resp.json()["status"] == "REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_multiple_sources_linked_to_one_buyer(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    first = await client.post("/api/v1/leads", headers=headers, json={"full_name": "Anita Rao", "phone": "9444444444"})
+    lead_id = first.json()["lead_id"]
+
+    body = json.dumps({"full_name": "Anita Rao", "phone": "9444444444", "external_lead_id": "EXT-1"}).encode()
+    webhook_resp = await client.post(
+        "/api/v1/leads/webhooks/website",
+        headers={"X-Webhook-Signature": _sign(body)},
+        content=body,
+    )
+    assert webhook_resp.status_code == 201
+    assert webhook_resp.json()["lead_id"] == lead_id
+
+    sources_resp = await client.get(f"/api/v1/leads/{lead_id}/sources", headers=headers)
+    assert sources_resp.status_code == 200
+    assert len(sources_resp.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_webhook_requires_valid_signature(client):
+    body = json.dumps({"full_name": "No Sig", "phone": "9555555555"}).encode()
+    resp = await client.post("/api/v1/leads/webhooks/website", content=body)
+    assert resp.status_code == 401
+
+    bad_sig_resp = await client.post(
+        "/api/v1/leads/webhooks/website", headers={"X-Webhook-Signature": "deadbeef"}, content=body
+    )
+    assert bad_sig_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_duplicate_webhook_submission_is_idempotent(client):
+    body = json.dumps({"full_name": "Webhook Buyer", "phone": "9666666666"}).encode()
+    headers = {"X-Webhook-Signature": _sign(body), "Idempotency-Key": "fixed-key-123"}
+
+    first_resp = await client.post("/api/v1/leads/webhooks/website", headers=headers, content=body)
+    assert first_resp.status_code == 201
+    second_resp = await client.post("/api/v1/leads/webhooks/website", headers=headers, content=body)
+    assert second_resp.status_code == 201
+    assert second_resp.json()["idempotent_replay"] is True
+    assert second_resp.json()["lead_id"] == first_resp.json()["lead_id"]
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(delete(LeadSource))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_ingestion_resolves_to_one_lead(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    payload = {"full_name": "Concurrent Buyer", "phone": "9777777777"}
+    results = await asyncio.gather(
+        client.post("/api/v1/leads", headers=headers, json=payload),
+        client.post("/api/v1/leads", headers=headers, json=payload),
+    )
+    assert all(r.status_code == 201 for r in results)
+    lead_ids = {r.json()["lead_id"] for r in results}
+    assert len(lead_ids) == 1
+
+
+@pytest.mark.asyncio
+async def test_csv_import_validation_and_partial_failure(client, seeded_users):
+    headers = await _login(client, ADMIN_EMAIL)
+    csv_content = (
+        "full_name,phone,email\n"
+        "Good Row,9888800001,good@example.com\n"
+        ",9888800002,missing-name@example.com\n"
+        "Another Good,9888800003,\n"
+    )
+    files = {"file": ("leads.csv", csv_content, "text/csv")}
+    resp = await client.post("/api/v1/leads/import", headers=headers, files=files)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_rows"] == 3
+    assert data["created"] == 2
+    assert data["failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_csv_import_rejects_non_csv_file(client, seeded_users):
+    headers = await _login(client, ADMIN_EMAIL)
+    files = {"file": ("leads.txt", "full_name,phone\nA,9000000000\n", "text/plain")}
+    resp = await client.post("/api/v1/leads/import", headers=headers, files=files)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_csv_import_requires_manager_or_admin(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    files = {"file": ("leads.csv", "full_name,phone\nA,9000000000\n", "text/csv")}
+    resp = await client.post("/api/v1/leads/import", headers=headers, files=files)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_role_based_api_permissions(client, seeded_users):
+    headers_exec = await _login(client, EXEC_EMAIL)
+    resp = await client.get("/api/v1/leads/duplicates", headers=headers_exec)
+    assert resp.status_code == 403
+
+    unauth_resp = await client.get("/api/v1/leads")
+    assert unauth_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_lead_listing_filtering_and_pagination(client, seeded_users):
+    headers = await _login(client, EXEC_EMAIL)
+    for i in range(3):
+        await client.post("/api/v1/leads", headers=headers, json={"full_name": f"Pager Buyer {i}", "phone": f"970000000{i}"})
+
+    resp = await client.get("/api/v1/leads", headers=headers, params={"limit": 2, "offset": 0, "search": "Pager"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["items"]) == 2
+    assert data["total"] >= 3
