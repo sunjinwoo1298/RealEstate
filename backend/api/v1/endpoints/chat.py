@@ -17,8 +17,10 @@ from backend.schemas.conversation import (
     MessagePublic,
     SendMessageRequest,
 )
+from backend.services.ai_orchestrator_service import AIOrchestratorService
 from backend.services.buyer_session_service import BuyerSessionService
 from backend.services.conversation_service import ConversationService
+from backend.services.lead_service import LeadService
 
 router = APIRouter(prefix="/chat", tags=["Buyer Chat"])
 
@@ -157,4 +159,8 @@ async def send_buyer_message(
         content=payload.content,
         message_type=MessageType.TEXT,
     )
+
+    lead = await LeadService.get_lead_by_id(db, conversation.lead_id)
+    await AIOrchestratorService.handle_buyer_message(db, conversation, lead, payload.content)
+
     return MessagePublic.model_validate(message)

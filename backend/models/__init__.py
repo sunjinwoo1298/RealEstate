@@ -15,6 +15,10 @@ from backend.models.conversation import (
 )
 from backend.models.message import Message, SenderType, MessageType
 from backend.models.buyer_session import BuyerSession
+from backend.models.project import Project
+from backend.models.knowledge_document import KnowledgeDocument, ApprovalStatus
+from backend.models.knowledge_chunk import KnowledgeChunk
+from backend.models.lead_qualification import LeadQualification, ConfigurationType, PurchasePurpose
 
 __all__ = [
     "Base",
@@ -40,4 +44,11 @@ __all__ = [
     "SenderType",
     "MessageType",
     "BuyerSession",
+    "Project",
+    "KnowledgeDocument",
+    "ApprovalStatus",
+    "KnowledgeChunk",
+    "LeadQualification",
+    "ConfigurationType",
+    "PurchasePurpose",
 ]

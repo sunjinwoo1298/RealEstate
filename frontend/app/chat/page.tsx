@@ -37,6 +37,7 @@ export default function BuyerChatPage() {
   // Composer state
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [aiTyping, setAiTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadMessages = async (conversationId: string) => {
@@ -105,11 +106,15 @@ export default function BuyerChatPage() {
     setSending(true);
     const content = draft.trim();
     try {
+      // The backend generates the AI reply synchronously as part of this
+      // request, so "typing" reflects real processing time, not padding.
+      setAiTyping(true);
       const sent = await apiClient.sendChatMessage(conversation.id, content);
       setMessages((prev) => [...prev, sent]);
       setDraft("");
       setDisconnected(false);
       setMessagesError(null);
+      await loadMessages(conversation.id);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setView("expired");
@@ -119,6 +124,7 @@ export default function BuyerChatPage() {
       setMessagesError(err instanceof ApiError ? err.message : "Failed to send message.");
     } finally {
       setSending(false);
+      setAiTyping(false);
     }
   };
 
@@ -306,6 +312,15 @@ export default function BuyerChatPage() {
               </div>
             );
           })
+        )}
+        {aiTyping && (
+          <div className="flex justify-start">
+            <div className="bg-white border border-[#E5E5DE] rounded-xl rounded-bl-sm px-3.5 py-2.5 shadow-xs flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#C5C5BB] animate-bounce [animation-delay:-0.3s]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[#C5C5BB] animate-bounce [animation-delay:-0.15s]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[#C5C5BB] animate-bounce" />
+            </div>
+          </div>
         )}
         {messagesError && (
           <div className="flex items-center gap-2 text-xs text-[#C34D4D] bg-[#FDF2F2] border border-[#F8D2D2] rounded-lg px-3 py-2">

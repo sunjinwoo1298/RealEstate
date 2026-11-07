@@ -85,6 +85,22 @@ class Settings(BaseSettings):
     CHAT_MESSAGE_RATE_LIMIT_MAX_ATTEMPTS: int = Field(default=30, description="Max buyer messages per window per conversation")
     CHAT_MESSAGE_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, description="Buyer message rate limit window in seconds")
 
+    # AI qualification / knowledge (RAG)
+    GROQ_API_KEY: str = Field(default="", description="Groq API key used for all LLM orchestration calls")
+    GROQ_MODEL: str = Field(default="openai/gpt-oss-20b", description="Groq chat-completion model id")
+    AI_RESPONSE_TIMEOUT_SECONDS: float = Field(default=20.0, description="Max time allowed for the full AI reply pipeline")
+    EMBEDDING_MODEL_NAME: str = Field(
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        description="Sentence-transformers model used for knowledge chunk and query embeddings (multilingual, offline)",
+    )
+    EMBEDDING_DIMENSION: int = Field(default=384, description="Embedding vector dimension produced by EMBEDDING_MODEL_NAME")
+    KNOWLEDGE_CHUNK_SIZE_CHARS: int = Field(default=900, description="Target character length per knowledge chunk")
+    KNOWLEDGE_CHUNK_OVERLAP_CHARS: int = Field(default=150, description="Character overlap between consecutive chunks")
+    RAG_TOP_K: int = Field(default=4, description="Number of semantic chunks retrieved per knowledge query")
+    AI_PROCESSING_LOCK_TTL_SECONDS: int = Field(
+        default=30, description="TTL for the per-conversation AI-processing lock that prevents duplicate AI replies on retry"
+    )
+
     model_config = SettingsConfigDict(
         env_file=(
             ".env.local",
