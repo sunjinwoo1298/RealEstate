@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.ai.groq_client import GroqClient, LLMProviderError
 from backend.ai.guardrails import (
     GuardrailFlags,
+    detect_complaint_request,
     detect_handoff_request,
     detect_pricing_or_discount_request,
     detect_prompt_injection,
@@ -25,7 +26,9 @@ from backend.core.database import get_session_factory
 from backend.core.logging import logger
 from backend.core.redis import get_redis_client
 from backend.models.conversation import Conversation, ConversationState, ConversationStatus, OwnershipStatus
+from backend.models.handoff import HandoffReason
 from backend.models.lead import Lead
+from backend.models.lead_qualification import LeadQualification
 from backend.models.lead_qualification import ConfigurationType, PurchasePurpose
 from backend.models.message import Message, MessageType, SenderType
 from backend.services.conversation_service import ALLOWED_STATE_TRANSITIONS, ConversationService
@@ -59,6 +62,60 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _determine_handoff_reason(
+    extraction: ExtractionResult, guardrail_flags: GuardrailFlags, retrieved_chunks: List
+) -> Optional[HandoffReason]:
+    """
+    Escalation triggers per CLAUDE.md section 6: an explicit buyer request
+    always wins, then a complaint/sensitive query, then an unsupported
+    pricing/discount/commitment ask (the reply guardrail already blocked
+    it), then low-confidence (asked about a specific project and nothing
+    relevant was retrieved to ground an answer).
+    """
+    if guardrail_flags.handoff_requested:
+        return HandoffReason.BUYER_REQUEST
+    if guardrail_flags.complaint_detected:
+        return HandoffReason.COMPLAINT
+    if guardrail_flags.reply_price_violation_blocked:
+        return HandoffReason.UNSUPPORTED_QUERY
+    if extraction.intent == "PROJECT_QUESTION" and extraction.mentioned_project_name and not retrieved_chunks:
+        return HandoffReason.LOW_CONFIDENCE
+    return None
+
+
+def _build_handoff_summary(
+    lead: Lead,
+    qualification: Optional[LeadQualification],
+    buyer_message_text: str,
+    reason: HandoffReason,
+) -> str:
+    """
+    A concise, structured handoff summary built only from data already
+    captured for this buyer -- never invents amenities, prices or
+    commitments. Surfaced to the sales executive via HandoffDetail.
+    """
+    parts = [f"Escalation reason: {reason.value.replace('_', ' ').title()}."]
+    contact = lead.normalized_phone or lead.normalized_email or "no contact on file"
+    parts.append(f"Buyer: {lead.full_name} ({contact}).")
+
+    if qualification is not None:
+        details = []
+        if qualification.configuration:
+            details.append(f"configuration {qualification.configuration.value.replace('_', ' ')}")
+        if qualification.budget_min or qualification.budget_max:
+            details.append("budget captured")
+        if qualification.purchase_purpose:
+            details.append(f"purpose {qualification.purchase_purpose.value.replace('_', ' ').lower()}")
+        if qualification.preferred_visit_date:
+            details.append(f"wants to visit around {qualification.preferred_visit_date.isoformat()}")
+        if details:
+            parts.append("Qualification: " + ", ".join(details) + ".")
+
+    trimmed = buyer_message_text.strip().replace("\n", " ")[:280]
+    parts.append(f'Latest message: "{trimmed}"')
+    return " ".join(parts)
 
 
 class AIOrchestratorService:
@@ -123,6 +180,7 @@ class AIOrchestratorService:
             prompt_injection_detected=detect_prompt_injection(buyer_message_text),
             pricing_or_discount_requested=detect_pricing_or_discount_request(buyer_message_text),
             handoff_requested=detect_handoff_request(buyer_message_text),
+            complaint_detected=detect_complaint_request(buyer_message_text),
         )
 
         history = await AIOrchestratorService._load_history_messages(
@@ -177,7 +235,6 @@ class AIOrchestratorService:
             if extraction.intent in ("PROJECT_QUESTION", "OTHER"):
                 retrieved_chunks = await tools.search_project_knowledge(resolved_project_id, buyer_message_text)
 
-        escalate_to_human = guardrail_flags.handoff_requested
         knowledge_context = format_knowledge_context(
             project_info=project_info, chunks=[c.content for c in retrieved_chunks]
         )
@@ -195,7 +252,10 @@ class AIOrchestratorService:
         reply: OrchestratorReply = reply_completion.data
         final_reply_text = enforce_reply_guardrails(reply.reply_text, language=reply_language, flags=guardrail_flags)
 
-        if escalate_to_human:
+        handoff_reason = _determine_handoff_reason(extraction, guardrail_flags, retrieved_chunks)
+        if handoff_reason is not None:
+            summary = _build_handoff_summary(lead, qualification, buyer_message_text, handoff_reason)
+            await tools.request_human_handoff(conversation, lead, reason=handoff_reason, summary=summary)
             final_reply_text = (
                 final_reply_text
                 + ("\n\n" if final_reply_text else "")
@@ -205,7 +265,6 @@ class AIOrchestratorService:
                     "GU": "Hun tamne amari sales team sathe jodu chhu — te thodi vaar ma aa chat ma jodaashe.",
                 }.get(reply_language, "Connecting you with a member of our sales team now.")
             )
-            conversation.ownership_status = OwnershipStatus.PENDING_ASSIGNMENT
 
         if (
             conversation.conversation_state == ConversationState.DISCOVERY
@@ -242,9 +301,11 @@ class AIOrchestratorService:
                     "prompt_injection_detected": guardrail_flags.prompt_injection_detected,
                     "pricing_or_discount_requested": guardrail_flags.pricing_or_discount_requested,
                     "handoff_requested": guardrail_flags.handoff_requested,
+                    "complaint_detected": guardrail_flags.complaint_detected,
                     "reply_price_violation_blocked": guardrail_flags.reply_price_violation_blocked,
                     "notes": guardrail_flags.notes,
                 },
+                "handoff_reason": handoff_reason.value if handoff_reason else None,
             },
         )
         db.add(ai_message)

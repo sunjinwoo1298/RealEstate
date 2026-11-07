@@ -16,6 +16,7 @@ import {
   Building2,
   ShieldCheck,
   UserCog,
+  Headset,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
@@ -32,7 +33,9 @@ const navItems: NavItem[] = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Leads", href: "/leads", icon: Users },
   { label: "Conversations", href: "/conversations", icon: MessageSquare },
+  { label: "Handoff Queue", href: "/handoff", icon: Headset },
   { label: "Site Visits", href: "/visits", icon: CalendarDays },
+  { label: "Availability", href: "/admin/availability", icon: CalendarDays, roles: ["ADMIN", "MANAGER"] },
   { label: "Knowledge Base", href: "/knowledge", icon: FileText, roles: ["ADMIN"] },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Staff Accounts", href: "/admin/staff", icon: UserCog, roles: ["ADMIN"] },

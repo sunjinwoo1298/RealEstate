@@ -11,12 +11,15 @@ from backend.main import app
 from backend.core.config import settings
 from backend.core.database import get_session_factory
 from backend.core.security import hash_password
+from backend.ai.groq_client import StructuredCompletion
+from backend.ai.schemas import ExtractionResult, OrchestratorReply
 from backend.models.auth_session import AuthSession
 from backend.models.buyer_session import BuyerSession
 from backend.models.conversation import Conversation, ConversationStatus
 from backend.models.lead import Lead
 from backend.models.message import Message
 from backend.models.user import User, UserRole
+from backend.services import ai_orchestrator_service as orchestrator_module
 
 ADMIN_EMAIL = "test-conv-admin@estateflow.ai"
 EXEC_EMAIL = "test-conv-exec@estateflow.ai"
@@ -76,6 +79,46 @@ async def _create_chat_session(client, *, full_name="Test Buyer", phone=None):
         },
     )
     return resp
+
+
+def _completion(data, latency_ms: float = 5.0, prompt_tokens: int = 5, completion_tokens: int = 5) -> StructuredCompletion:
+    return StructuredCompletion(
+        data=data, latency_ms=latency_ms, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+    )
+
+
+def _mock_ai_reply(monkeypatch, *, reply_text: str = "Thanks for reaching out! How can I help you today?") -> None:
+    """
+    Stubs the Groq provider boundary (not the orchestrator's own logic) so a
+    real AI message is extracted/generated/persisted deterministically,
+    without any live network call. Queues exactly one extraction + one reply
+    completion, matching the two sequential LLM calls a single buyer message
+    triggers in AIOrchestratorService._run_pipeline.
+    """
+    responses = [
+        _completion(ExtractionResult(detected_language="EN", intent="OTHER")),
+        _completion(OrchestratorReply(reply_text=reply_text, language="EN")),
+    ]
+
+    async def fake_generate_structured(*, system_prompt, messages, schema, temperature=0.2, max_tokens=1024):
+        return responses.pop(0)
+
+    monkeypatch.setattr(orchestrator_module.GroqClient, "generate_structured", fake_generate_structured)
+
+
+def _disable_ai_orchestrator(monkeypatch) -> None:
+    """
+    Fully bypasses the AI pipeline (no Groq call, no embedding model load, no
+    AI message persisted) for tests whose purpose is buyer-message
+    persistence/pagination/ordering/concurrency mechanics, not AI behavior --
+    that's covered separately by test_ai_qualification.py and the evaluation
+    dataset.
+    """
+
+    async def fake_handle_buyer_message(db, conversation, lead, buyer_message_text):
+        return orchestrator_module.OrchestratorResult(ai_message=None, skipped_reason="TEST_DISABLED")
+
+    monkeypatch.setattr(orchestrator_module.AIOrchestratorService, "handle_buyer_message", fake_handle_buyer_message)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -174,7 +217,9 @@ async def test_unauthorized_access_to_other_conversation(client):
 
 
 @pytest.mark.asyncio
-async def test_send_and_retrieve_messages(client):
+async def test_send_and_retrieve_messages(client, monkeypatch):
+    _mock_ai_reply(monkeypatch, reply_text="Sure, happy to help you find the right home!")
+
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]
     cookie = create_resp.cookies.get(settings.BUYER_SESSION_COOKIE_NAME)
@@ -187,15 +232,27 @@ async def test_send_and_retrieve_messages(client):
     assert send_resp.json()["sender_type"] == "BUYER"
     assert send_resp.json()["content"] == "Hello, I am interested"
 
+    # The buyer message is persisted first, then the orchestrator (mocked at the
+    # Groq boundary above) generates and persists a real AI reply in the same
+    # request -- the conversation should now hold exactly these two messages,
+    # in order, with the expected sender types.
     messages_resp = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")
     assert messages_resp.status_code == 200
     body = messages_resp.json()
-    assert body["total"] == 1
+    assert body["total"] == 2
+    assert body["items"][0]["sender_type"] == "BUYER"
     assert body["items"][0]["content"] == "Hello, I am interested"
+    assert body["items"][1]["sender_type"] == "AI"
+    assert body["items"][1]["content"] == "Sure, happy to help you find the right home!"
 
 
 @pytest.mark.asyncio
-async def test_message_pagination_and_ordering(client):
+async def test_message_pagination_and_ordering(client, monkeypatch):
+    # This test is about buyer-message pagination/ordering mechanics, not AI
+    # behavior -- disable the orchestrator so no AI messages are interleaved
+    # and no live Groq call is made.
+    _disable_ai_orchestrator(monkeypatch)
+
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]
     cookie = create_resp.cookies.get(settings.BUYER_SESSION_COOKIE_NAME)
@@ -211,7 +268,9 @@ async def test_message_pagination_and_ordering(client):
     page2 = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages?limit=2&offset=2")
     assert page1.json()["total"] == 5
     assert [m["content"] for m in page1.json()["items"]] == ["message 0", "message 1"]
+    assert [m["sender_type"] for m in page1.json()["items"]] == ["BUYER", "BUYER"]
     assert [m["content"] for m in page2.json()["items"]] == ["message 2", "message 3"]
+    assert [m["sender_type"] for m in page2.json()["items"]] == ["BUYER", "BUYER"]
 
 
 @pytest.mark.asyncio
@@ -253,7 +312,13 @@ async def test_closed_conversation_rejects_new_messages(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_message_submissions_all_persist(client):
+async def test_concurrent_message_submissions_all_persist(client, monkeypatch):
+    # This test is about the buyer-message write path under concurrency, not
+    # AI pipeline concurrency (that's covered by test_ai_qualification.py's
+    # duplicate-processing-lock test) -- disable the orchestrator so no AI
+    # messages appear and no live Groq calls race each other here.
+    _disable_ai_orchestrator(monkeypatch)
+
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]
     cookie = create_resp.cookies.get(settings.BUYER_SESSION_COOKIE_NAME)
@@ -266,11 +331,13 @@ async def test_concurrent_message_submissions_all_persist(client):
 
     results = await asyncio.gather(*[_send(i) for i in range(8)])
     assert all(r.status_code == 201 for r in results)
+    assert all(r.json()["sender_type"] == "BUYER" for r in results)
     ids = {r.json()["id"] for r in results}
     assert len(ids) == 8
 
     messages_resp = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages?limit=20")
     assert messages_resp.json()["total"] == 8
+    assert all(m["sender_type"] == "BUYER" for m in messages_resp.json()["items"])
 
 
 @pytest.mark.asyncio
@@ -280,7 +347,9 @@ async def test_staff_requires_authentication(client):
 
 
 @pytest.mark.asyncio
-async def test_staff_can_list_and_view_conversation(client, seeded_users):
+async def test_staff_can_list_and_view_conversation(client, seeded_users, monkeypatch):
+    _mock_ai_reply(monkeypatch, reply_text="We have a few 2 BHK options -- let me get you some details.")
+
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]
     cookie = create_resp.cookies.get(settings.BUYER_SESSION_COOKIE_NAME)
@@ -299,9 +368,16 @@ async def test_staff_can_list_and_view_conversation(client, seeded_users):
     assert detail_resp.status_code == 200
     assert detail_resp.json()["lead_full_name"] == "Test Buyer"
 
+    # Staff viewing the conversation should see both the buyer's message and
+    # the AI's reply that was generated for it.
     messages_resp = await client.get(f"/api/v1/conversations/{conversation_id}/messages", headers=headers)
     assert messages_resp.status_code == 200
-    assert messages_resp.json()["total"] == 1
+    items = messages_resp.json()["items"]
+    assert messages_resp.json()["total"] == 2
+    assert items[0]["sender_type"] == "BUYER"
+    assert items[0]["content"] == "Looking for a 2BHK"
+    assert items[1]["sender_type"] == "AI"
+    assert items[1]["content"] == "We have a few 2 BHK options -- let me get you some details."
 
 
 @pytest.mark.asyncio

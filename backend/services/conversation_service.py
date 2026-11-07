@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
 from backend.core.exceptions import ConflictException, NotFoundException, ValidationException
-from backend.models.conversation import ChannelType, Conversation, ConversationLanguage, ConversationState, ConversationStatus
+from backend.models.conversation import (
+    ChannelType,
+    Conversation,
+    ConversationLanguage,
+    ConversationState,
+    ConversationStatus,
+    OwnershipStatus,
+)
 from backend.models.lead import ConsentStatus, Lead
 from backend.models.lead_source import SourceType
 from backend.models.message import Message, MessageType, SenderType
@@ -23,6 +30,18 @@ ALLOWED_STATE_TRANSITIONS: Dict[ConversationState, set] = {
     ConversationState.QUALIFIED: {ConversationState.VISIT_REQUESTED},
     ConversationState.VISIT_REQUESTED: {ConversationState.VISIT_BOOKED},
     ConversationState.VISIT_BOOKED: set(),
+}
+
+# Ownership transitions per ARCHITECTURE_CONTEXT.md section 9:
+# AI_ACTIVE -> PENDING_ASSIGNMENT -> HUMAN_ACTIVE -> RESOLVED, with an
+# explicit, authorized return to AI_ACTIVE possible from HUMAN_ACTIVE or
+# RESOLVED (never automatic). PENDING_ASSIGNMENT can also fall back to
+# AI_ACTIVE if a handoff is cancelled before any executive accepts it.
+ALLOWED_OWNERSHIP_TRANSITIONS: Dict[OwnershipStatus, set] = {
+    OwnershipStatus.AI_ACTIVE: {OwnershipStatus.PENDING_ASSIGNMENT},
+    OwnershipStatus.PENDING_ASSIGNMENT: {OwnershipStatus.HUMAN_ACTIVE, OwnershipStatus.AI_ACTIVE},
+    OwnershipStatus.HUMAN_ACTIVE: {OwnershipStatus.RESOLVED, OwnershipStatus.AI_ACTIVE, OwnershipStatus.PENDING_ASSIGNMENT},
+    OwnershipStatus.RESOLVED: {OwnershipStatus.AI_ACTIVE},
 }
 
 
@@ -165,6 +184,21 @@ class ConversationService:
                 f"Cannot transition conversation from {conversation.conversation_state.value} to {new_state.value}"
             )
         conversation.conversation_state = new_state
+
+    @staticmethod
+    def transition_ownership(conversation: Conversation, new_status: OwnershipStatus) -> None:
+        """
+        Validates and applies an ownership_status transition in-memory. Does
+        not commit -- callers (HandoffService/AssignmentService/the
+        ownership endpoint) commit as part of their own transaction so the
+        ownership change and its triggering business event land atomically.
+        """
+        allowed = ALLOWED_OWNERSHIP_TRANSITIONS.get(conversation.ownership_status, set())
+        if new_status not in allowed:
+            raise ValidationException(
+                f"Cannot transition ownership from {conversation.ownership_status.value} to {new_status.value}"
+            )
+        conversation.ownership_status = new_status
 
     @staticmethod
     async def list_conversations_staff(

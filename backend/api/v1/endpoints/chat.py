@@ -25,6 +25,11 @@ from backend.services.lead_service import LeadService
 router = APIRouter(prefix="/chat", tags=["Buyer Chat"])
 
 
+# Scoped to /api/v1 (not just /api/v1/chat) since Feature 05 added buyer-session
+# authorized booking endpoints at /api/v1/bookings and /api/v1/availability.
+_BUYER_SESSION_COOKIE_PATH = "/api/v1"
+
+
 def _set_session_cookie(response: Response, raw_token: str) -> None:
     response.set_cookie(
         key=settings.BUYER_SESSION_COOKIE_NAME,
@@ -34,7 +39,7 @@ def _set_session_cookie(response: Response, raw_token: str) -> None:
         secure=settings.COOKIE_SECURE,
         samesite=settings.COOKIE_SAMESITE,
         domain=settings.COOKIE_DOMAIN,
-        path="/api/v1/chat",
+        path=_BUYER_SESSION_COOKIE_PATH,
     )
 
 
@@ -42,7 +47,7 @@ def _clear_session_cookie(response: Response) -> None:
     response.delete_cookie(
         key=settings.BUYER_SESSION_COOKIE_NAME,
         domain=settings.COOKIE_DOMAIN,
-        path="/api/v1/chat",
+        path=_BUYER_SESSION_COOKIE_PATH,
     )
 
 

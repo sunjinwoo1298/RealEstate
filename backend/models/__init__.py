@@ -19,6 +19,14 @@ from backend.models.project import Project
 from backend.models.knowledge_document import KnowledgeDocument, ApprovalStatus
 from backend.models.knowledge_chunk import KnowledgeChunk
 from backend.models.lead_qualification import LeadQualification, ConfigurationType, PurchasePurpose
+from backend.models.availability_rule import AvailabilityRule
+from backend.models.blocked_period import BlockedPeriod
+from backend.models.project_visit_capacity import ProjectVisitCapacity
+from backend.models.site_visit import SiteVisit, SiteVisitStatus
+from backend.models.visit_event import VisitEvent, VisitEventType
+from backend.models.handoff import Handoff, HandoffStatus, HandoffReason
+from backend.models.conversation_assignment import ConversationAssignment, AssignmentStatus
+from backend.models.notification import Notification, NotificationType, NotificationStatus
 
 __all__ = [
     "Base",
@@ -51,4 +59,19 @@ __all__ = [
     "LeadQualification",
     "ConfigurationType",
     "PurchasePurpose",
+    "AvailabilityRule",
+    "BlockedPeriod",
+    "ProjectVisitCapacity",
+    "SiteVisit",
+    "SiteVisitStatus",
+    "VisitEvent",
+    "VisitEventType",
+    "Handoff",
+    "HandoffStatus",
+    "HandoffReason",
+    "ConversationAssignment",
+    "AssignmentStatus",
+    "Notification",
+    "NotificationType",
+    "NotificationStatus",
 ]

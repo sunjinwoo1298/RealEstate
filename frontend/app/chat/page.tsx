@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Building2, Loader2, AlertCircle, Send, WifiOff, MessageSquare } from "lucide-react";
+import { Building2, Loader2, AlertCircle, Headset, Send, WifiOff, MessageSquare } from "lucide-react";
 import {
   apiClient,
   ApiError,
@@ -9,6 +9,21 @@ import {
   ConversationPublic,
   MessagePublic,
 } from "@/lib/api-client";
+
+const OWNERSHIP_BANNER: Record<string, { text: string; className: string } | undefined> = {
+  PENDING_ASSIGNMENT: {
+    text: "We're connecting you with a member of our sales team. They'll join this chat shortly.",
+    className: "bg-[#FDF6EC] text-[#B9772F] border-[#F3E2C2]",
+  },
+  HUMAN_ACTIVE: {
+    text: "A sales executive has joined this chat.",
+    className: "bg-[#E9F5EF] text-[#27845B] border-[#C9E8D8]",
+  },
+  RESOLVED: {
+    text: "This conversation has been resolved by our team.",
+    className: "bg-[#F0F1EC] text-[#202B28] border-[#E5E5DE]",
+  },
+};
 
 type ViewState = "loading" | "entry" | "chat" | "expired";
 
@@ -24,6 +39,7 @@ export default function BuyerChatPage() {
   const [messages, setMessages] = useState<MessagePublic[]>([]);
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [disconnected, setDisconnected] = useState(false);
+  const [handoffRequested, setHandoffRequested] = useState(false);
 
   // Entry form state
   const [fullName, setFullName] = useState("");
@@ -46,6 +62,12 @@ export default function BuyerChatPage() {
       setMessages(data.items);
       setMessagesError(null);
       setDisconnected(false);
+      // Ownership can change server-side (AI escalation, an executive
+      // joining/resolving) independently of anything the buyer just sent,
+      // so re-fetch the conversation alongside messages to keep the banner
+      // in sync rather than only reflecting ownership as of chat start.
+      const refreshed = await apiClient.getChatConversation(conversationId);
+      setConversation(refreshed);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setView("expired");
@@ -125,6 +147,18 @@ export default function BuyerChatPage() {
     } finally {
       setSending(false);
       setAiTyping(false);
+    }
+  };
+
+  const handleRequestHandoff = async () => {
+    if (!conversation) return;
+    setHandoffRequested(true);
+    try {
+      await apiClient.requestHandoff(conversation.id);
+      await loadMessages(conversation.id);
+    } catch (err) {
+      setMessagesError(err instanceof ApiError ? err.message : "Failed to request a sales executive.");
+      setHandoffRequested(false);
     }
   };
 
@@ -284,7 +318,28 @@ export default function BuyerChatPage() {
             )}
           </p>
         </div>
+        {conversation?.ownership_status === "AI_ACTIVE" && (
+          <button
+            onClick={handleRequestHandoff}
+            disabled={handoffRequested}
+            className="h-9 px-3 rounded-lg border border-[#315C50] text-[#173B35] text-xs font-semibold flex items-center gap-1.5 hover:bg-[#E9F5EF] disabled:opacity-60 transition-colors shrink-0"
+          >
+            <Headset className="w-3.5 h-3.5" />
+            Talk to a human
+          </button>
+        )}
       </header>
+
+      {conversation && OWNERSHIP_BANNER[conversation.ownership_status] && (
+        <div
+          className={`mx-4 mt-3 flex items-center gap-2 text-xs rounded-lg border px-3 py-2 shrink-0 ${
+            OWNERSHIP_BANNER[conversation.ownership_status]!.className
+          }`}
+        >
+          <Headset className="w-3.5 h-3.5 shrink-0" />
+          <span>{OWNERSHIP_BANNER[conversation.ownership_status]!.text}</span>
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6 space-y-3">
         {messages.length === 0 && !messagesError ? (
@@ -295,17 +350,23 @@ export default function BuyerChatPage() {
         ) : (
           messages.map((message) => {
             const isBuyer = message.sender_type === "BUYER";
+            const isStaff = message.sender_type === "STAFF";
             return (
               <div key={message.id} className={`flex ${isBuyer ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-[80%] rounded-xl px-3.5 py-2.5 text-sm shadow-xs ${
                     isBuyer
                       ? "bg-[#173B35] text-white rounded-br-sm"
+                      : isStaff
+                      ? "bg-[#C47A55] text-white rounded-bl-sm"
                       : "bg-white border border-[#E5E5DE] text-[#202B28] rounded-bl-sm"
                   }`}
                 >
+                  {isStaff && (
+                    <p className="text-[10px] font-semibold uppercase tracking-wide mb-1 opacity-80">Our team</p>
+                  )}
                   <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                  <p className={`text-[10px] mt-1 ${isBuyer ? "text-[#A3B8B0]" : "text-[#9EA69F]"}`}>
+                  <p className={`text-[10px] mt-1 ${isBuyer || isStaff ? "text-white/70" : "text-[#9EA69F]"}`}>
                     {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>

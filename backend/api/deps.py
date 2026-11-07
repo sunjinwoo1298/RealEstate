@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import AsyncGenerator, Callable, Optional
 import uuid
 
@@ -89,6 +90,40 @@ async def get_buyer_conversation(
 
     session = await BuyerSessionService.validate_session(db, raw_token)
     return await ConversationService.get_conversation_by_id(db, session.conversation_id)
+
+
+@dataclass
+class BookingPrincipal:
+    """
+    Resolved caller for booking-related endpoints, which must authorize
+    either staff (bearer JWT) or a buyer acting on their own lead (buyer
+    session cookie) -- never a caller-supplied lead/executive id alone.
+    """
+
+    user: Optional[User]
+    buyer_lead_id: Optional[uuid.UUID]
+
+    @property
+    def is_staff(self) -> bool:
+        return self.user is not None
+
+
+async def get_booking_principal(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    db: AsyncSession = Depends(get_db_session),
+) -> BookingPrincipal:
+    if credentials is not None and credentials.credentials:
+        user = await get_current_user(credentials, db)
+        return BookingPrincipal(user=user, buyer_lead_id=None)
+
+    raw_token = request.cookies.get(settings.BUYER_SESSION_COOKIE_NAME)
+    if not raw_token:
+        raise UnauthorizedException("Authentication required")
+
+    session = await BuyerSessionService.validate_session(db, raw_token)
+    conversation = await ConversationService.get_conversation_by_id(db, session.conversation_id)
+    return BookingPrincipal(user=None, buyer_lead_id=conversation.lead_id)
 
 
 def verify_same_origin(request: Request) -> None:

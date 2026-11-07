@@ -28,6 +28,20 @@ _HANDOFF_PHRASES = [
     "stop the bot",
 ]
 
+_COMPLAINT_PHRASES = [
+    "complaint",
+    "unhappy",
+    "disappointed",
+    "this is unacceptable",
+    "refund",
+    "cheated",
+    "scam",
+    "fraud",
+    "legal action",
+    "consumer court",
+    "worst experience",
+]
+
 _PROMPT_INJECTION_PATTERNS = [
     re.compile(r"ignore (all|previous|above) instructions", re.IGNORECASE),
     re.compile(r"you are now", re.IGNORECASE),
@@ -49,6 +63,7 @@ class GuardrailFlags:
     prompt_injection_detected: bool = False
     pricing_or_discount_requested: bool = False
     handoff_requested: bool = False
+    complaint_detected: bool = False
     reply_price_violation_blocked: bool = False
     notes: List[str] = field(default_factory=list)
 
@@ -65,6 +80,11 @@ def detect_handoff_request(text: str) -> bool:
 def detect_pricing_or_discount_request(text: str) -> bool:
     lowered = text.lower()
     return "price" in lowered or "pricing" in lowered or "cost" in lowered or "discount" in lowered or "offer" in lowered
+
+
+def detect_complaint_request(text: str) -> bool:
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _COMPLAINT_PHRASES)
 
 
 def contains_price_or_discount_claim(text: str) -> bool:
