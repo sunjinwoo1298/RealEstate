@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator
 
 from backend.models.site_visit import SiteVisitStatus
 from backend.models.visit_event import VisitEventType
+from backend.schemas.reminder import VisitReminderPublic
 
 
 class SiteVisitPublic(BaseModel):
@@ -26,6 +27,27 @@ class SiteVisitPublic(BaseModel):
 
 class SiteVisitListResponse(BaseModel):
     items: List[SiteVisitPublic]
+    total: int
+
+
+class SiteVisitDetail(SiteVisitPublic):
+    """
+    SiteVisitPublic plus the joined display context and reminder status the
+    staff workspace needs (Feature 07 section 9) -- purely additive fields,
+    so it stays backward-compatible with any existing SiteVisitPublic
+    consumer.
+    """
+
+    lead_full_name: str
+    lead_normalized_phone: Optional[str]
+    project_name: str
+    executive_full_name: Optional[str]
+    reminder_24h: Optional[VisitReminderPublic] = None
+    reminder_2h: Optional[VisitReminderPublic] = None
+
+
+class SiteVisitDetailListResponse(BaseModel):
+    items: List[SiteVisitDetail]
     total: int
 
 

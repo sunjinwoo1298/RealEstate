@@ -8,14 +8,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.deps import BookingPrincipal, get_booking_principal, get_db_session, verify_same_origin
 from backend.core.exceptions import ForbiddenException
 from backend.models.site_visit import SiteVisit, SiteVisitStatus
+from backend.models.user import UserRole
 from backend.schemas.booking import (
     AttendanceUpdateRequest,
     BookingCreateRequest,
     BookingRescheduleRequest,
+    SiteVisitDetail,
+    SiteVisitDetailListResponse,
     SiteVisitListResponse,
     SiteVisitPublic,
 )
+from backend.schemas.reminder import VisitReminderListResponse, VisitReminderPublic
 from backend.services.booking_service import BookingService
+from backend.services.reminder_service import ReminderService
+from backend.services.visit_display_service import VisitDisplayService
 
 router = APIRouter(prefix="/bookings", tags=["Site Visit Bookings"])
 
@@ -29,6 +35,16 @@ def _require_access(principal: BookingPrincipal, visit: SiteVisit) -> None:
     if principal.is_staff:
         return
     if principal.buyer_lead_id != visit.lead_id:
+        raise ForbiddenException("You do not have permission to access this booking")
+
+
+def _require_executive_scope(principal: BookingPrincipal, visit: SiteVisit) -> None:
+    """
+    A sales executive may only access visits/reminders assigned to them;
+    managers/admins (and buyers, already checked by _require_access) are
+    unrestricted here.
+    """
+    if principal.is_staff and principal.user.role == UserRole.SALES_EXECUTIVE and visit.executive_id != principal.user.id:
         raise ForbiddenException("You do not have permission to access this booking")
 
 
@@ -56,7 +72,7 @@ async def create_booking(
     return SiteVisitPublic.model_validate(visit)
 
 
-@router.get("", response_model=SiteVisitListResponse, summary="List authorized site-visit bookings")
+@router.get("", response_model=SiteVisitDetailListResponse, summary="List authorized site-visit bookings")
 async def list_bookings(
     project_id: Optional[uuid.UUID] = Query(default=None),
     executive_id: Optional[uuid.UUID] = Query(default=None),
@@ -65,8 +81,15 @@ async def list_bookings(
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db_session),
     principal: BookingPrincipal = Depends(get_booking_principal),
-) -> SiteVisitListResponse:
+) -> SiteVisitDetailListResponse:
     lead_id = None if principal.is_staff else principal.buyer_lead_id
+
+    # A sales executive only sees visits assigned to them (spec section 8);
+    # managers/admins keep the broader operational view and may still
+    # filter by any executive_id.
+    if principal.is_staff and principal.user.role == UserRole.SALES_EXECUTIVE:
+        executive_id = principal.user.id
+
     visits, total = await BookingService.list_site_visits(
         db,
         lead_id=lead_id,
@@ -76,18 +99,41 @@ async def list_bookings(
         limit=limit,
         offset=offset,
     )
-    return SiteVisitListResponse(items=[SiteVisitPublic.model_validate(v) for v in visits], total=total)
+    items = await VisitDisplayService.to_details(db, visits)
+    return SiteVisitDetailListResponse(items=items, total=total)
 
 
-@router.get("/{booking_id}", response_model=SiteVisitPublic, summary="Retrieve a site-visit booking")
+@router.get("/{booking_id}", response_model=SiteVisitDetail, summary="Retrieve a site-visit booking")
 async def get_booking(
     booking_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
     principal: BookingPrincipal = Depends(get_booking_principal),
-) -> SiteVisitPublic:
+) -> SiteVisitDetail:
     visit = await BookingService.get_site_visit(db, booking_id)
     _require_access(principal, visit)
-    return SiteVisitPublic.model_validate(visit)
+    _require_executive_scope(principal, visit)
+    details = await VisitDisplayService.to_details(db, [visit])
+    return details[0]
+
+
+@router.get(
+    "/{booking_id}/reminders", response_model=VisitReminderListResponse, summary="Retrieve reminder history for a booking"
+)
+async def get_booking_reminders(
+    booking_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    principal: BookingPrincipal = Depends(get_booking_principal),
+) -> VisitReminderListResponse:
+    if not principal.is_staff:
+        raise ForbiddenException("Only staff may view reminder history")
+
+    visit = await BookingService.get_site_visit(db, booking_id)
+    _require_executive_scope(principal, visit)
+
+    reminders = await ReminderService.list_reminders_for_visit(db, booking_id)
+    return VisitReminderListResponse(
+        items=[VisitReminderPublic.model_validate(r) for r in reminders], total=len(reminders)
+    )
 
 
 @router.post("/{booking_id}/cancel", response_model=SiteVisitPublic, summary="Cancel a site-visit booking")
@@ -133,6 +179,9 @@ async def record_attendance(
 ) -> SiteVisitPublic:
     if not principal.is_staff:
         raise ForbiddenException("Only staff may record visit attendance")
+
+    visit = await BookingService.get_site_visit(db, booking_id)
+    _require_executive_scope(principal, visit)
 
     updated = await BookingService.record_attendance(
         db, booking_id, status=payload.status, actor_id=principal.user.id

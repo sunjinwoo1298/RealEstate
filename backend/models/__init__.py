@@ -27,6 +27,7 @@ from backend.models.visit_event import VisitEvent, VisitEventType
 from backend.models.handoff import Handoff, HandoffStatus, HandoffReason
 from backend.models.conversation_assignment import ConversationAssignment, AssignmentStatus
 from backend.models.notification import Notification, NotificationType, NotificationStatus
+from backend.models.visit_reminder import VisitReminder, ReminderType, ReminderStatus
 
 __all__ = [
     "Base",
@@ -74,4 +75,7 @@ __all__ = [
     "Notification",
     "NotificationType",
     "NotificationStatus",
+    "VisitReminder",
+    "ReminderType",
+    "ReminderStatus",
 ]

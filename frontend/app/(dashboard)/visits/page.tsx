@@ -1,14 +1,17 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { CalendarDays, Clock, Plus, X } from "lucide-react";
+import { CalendarDays, Clock, Plus, RefreshCw, X } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 import {
   apiClient,
   ApiError,
   AvailableSlotPublic,
   ProjectPublic,
-  SiteVisitPublic,
+  ReminderStatus,
+  SiteVisitDetail,
   SiteVisitStatus,
+  VisitReminderPublic,
 } from "@/lib/api-client";
 
 const STATUS_BADGE: Record<SiteVisitStatus, string> = {
@@ -16,6 +19,26 @@ const STATUS_BADGE: Record<SiteVisitStatus, string> = {
   CANCELLED: "bg-[#FDF2F2] text-[#C34D4D]",
   COMPLETED: "bg-[#EDEFF8] text-[#3C4EA3]",
   NO_SHOW: "bg-[#FDF6EC] text-[#B9772F]",
+};
+
+const REMINDER_BADGE: Record<ReminderStatus, string> = {
+  SCHEDULED: "bg-[#F0F1EC] text-[#737C76]",
+  PROCESSING: "bg-[#EDEFF8] text-[#3C4EA3]",
+  SENT: "bg-[#E9F5EF] text-[#27845B]",
+  SIMULATED: "bg-[#E9F5EF] text-[#27845B]",
+  FAILED: "bg-[#FDF2F2] text-[#C34D4D]",
+  CANCELLED: "bg-[#F0F1EC] text-[#9AA39D]",
+  SKIPPED: "bg-[#F0F1EC] text-[#9AA39D]",
+};
+
+const REMINDER_LABEL: Record<ReminderStatus, string> = {
+  SCHEDULED: "Pending",
+  PROCESSING: "Sending",
+  SENT: "Sent",
+  SIMULATED: "Simulated",
+  FAILED: "Failed",
+  CANCELLED: "Cancelled",
+  SKIPPED: "Skipped",
 };
 
 function formatDateTime(iso: string): string {
@@ -26,8 +49,50 @@ function formatDateTime(iso: string): string {
   });
 }
 
+function ReminderBadge({
+  label,
+  reminder,
+  canRetry,
+  onRetry,
+}: {
+  label: string;
+  reminder: VisitReminderPublic | null;
+  canRetry: boolean;
+  onRetry: (reminderId: string) => void;
+}) {
+  if (!reminder) {
+    return (
+      <span className="text-xs text-[#9AA39D]" title={`No ${label} reminder scheduled`}>
+        {label}: &mdash;
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span
+        className={`text-xs font-semibold px-1.5 py-0.5 rounded-md ${REMINDER_BADGE[reminder.status]}`}
+        title={reminder.failure_reason || undefined}
+      >
+        {label}: {REMINDER_LABEL[reminder.status]}
+      </span>
+      {canRetry && reminder.status === "FAILED" && (
+        <button
+          onClick={() => onRetry(reminder.id)}
+          title="Retry this reminder"
+          className="text-[#737C76] hover:text-[#173B35]"
+        >
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
 export default function SiteVisitsPage() {
-  const [visits, setVisits] = useState<SiteVisitPublic[]>([]);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
+
+  const [visits, setVisits] = useState<SiteVisitDetail[]>([]);
   const [projects, setProjects] = useState<ProjectPublic[]>([]);
   const [statusFilter, setStatusFilter] = useState<SiteVisitStatus | "">("");
   const [loading, setLoading] = useState(true);
@@ -140,13 +205,22 @@ export default function SiteVisitsPage() {
     }
   };
 
+  const handleRetryReminder = async (reminderId: string) => {
+    try {
+      await apiClient.retryReminder(reminderId);
+      await loadVisits();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to retry reminder.");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold font-heading text-[#202B28] tracking-tight">Site Visits</h1>
           <p className="text-sm text-[#737C76] mt-1">
-            Executive-assigned, concurrency-safe site-visit bookings.
+            Executive-assigned, concurrency-safe site-visit bookings with automated reminders.
           </p>
         </div>
         <button
@@ -240,7 +314,7 @@ export default function SiteVisitsPage() {
         >
           <option value="">All</option>
           <option value="CONFIRMED">Confirmed</option>
-          <option value="COMPLETED">Completed</option>
+          <option value="COMPLETED">Attended</option>
           <option value="NO_SHOW">No-show</option>
           <option value="CANCELLED">Cancelled</option>
         </select>
@@ -261,29 +335,49 @@ export default function SiteVisitsPage() {
             <thead>
               <tr className="text-left text-xs font-semibold text-[#737C76] uppercase tracking-wider border-b border-[#E5E5DE]">
                 <th className="px-6 py-3">Reference</th>
+                <th className="px-6 py-3">Project</th>
+                <th className="px-6 py-3">Buyer</th>
+                <th className="px-6 py-3">Executive</th>
                 <th className="px-6 py-3">Start (IST)</th>
                 <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3">Reminders</th>
                 <th className="px-6 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {visits.map((visit) => (
-                <tr key={visit.id} className="border-b border-[#F0F1EC] last:border-0">
-                  <td className="px-6 py-3 font-medium text-[#202B28]">{visit.booking_reference}</td>
-                  <td className="px-6 py-3 text-[#737C76]">{formatDateTime(visit.start_time)}</td>
+                <tr key={visit.id} className="border-b border-[#F0F1EC] last:border-0 align-top">
+                  <td className="px-6 py-3 font-medium text-[#202B28] whitespace-nowrap">{visit.booking_reference}</td>
+                  <td className="px-6 py-3 text-[#202B28]">{visit.project_name}</td>
+                  <td className="px-6 py-3 text-[#202B28]">
+                    <div>{visit.lead_full_name}</div>
+                    {visit.lead_normalized_phone && (
+                      <div className="text-xs text-[#737C76]">{visit.lead_normalized_phone}</div>
+                    )}
+                  </td>
+                  <td className="px-6 py-3 text-[#737C76]">{visit.executive_full_name || "Unassigned"}</td>
+                  <td className="px-6 py-3 text-[#737C76] whitespace-nowrap">{formatDateTime(visit.start_time)}</td>
                   <td className="px-6 py-3">
                     <span className={`text-xs font-semibold px-2 py-1 rounded-md ${STATUS_BADGE[visit.status]}`}>
-                      {visit.status}
+                      {visit.status === "COMPLETED" ? "ATTENDED" : visit.status}
                     </span>
                   </td>
-                  <td className="px-6 py-3 text-right space-x-3">
+                  <td className="px-6 py-3 space-y-1">
+                    <div>
+                      <ReminderBadge label="24h" reminder={visit.reminder_24h} canRetry={isAdmin} onRetry={handleRetryReminder} />
+                    </div>
+                    <div>
+                      <ReminderBadge label="2h" reminder={visit.reminder_2h} canRetry={isAdmin} onRetry={handleRetryReminder} />
+                    </div>
+                  </td>
+                  <td className="px-6 py-3 text-right space-x-3 whitespace-nowrap">
                     {visit.status === "CONFIRMED" && (
                       <>
                         <button
                           onClick={() => handleAttendance(visit.id, "COMPLETED")}
                           className="text-xs font-semibold text-[#27845B] hover:underline"
                         >
-                          Mark Completed
+                          Mark Attended
                         </button>
                         <button
                           onClick={() => handleAttendance(visit.id, "NO_SHOW")}
@@ -304,7 +398,7 @@ export default function SiteVisitsPage() {
               ))}
               {visits.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-sm text-[#737C76]">
+                  <td colSpan={8} className="px-6 py-8 text-center text-sm text-[#737C76]">
                     No site visits found.
                   </td>
                 </tr>

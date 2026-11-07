@@ -101,6 +101,23 @@ class Settings(BaseSettings):
         default=30, description="TTL for the per-conversation AI-processing lock that prevents duplicate AI replies on retry"
     )
 
+    # Site-visit reminders (Feature 07)
+    REMINDER_WORKER_POLL_INTERVAL_SECONDS: int = Field(
+        default=30, description="How often the reminder worker polls for due reminders"
+    )
+    REMINDER_WORKER_BATCH_SIZE: int = Field(
+        default=50, description="Max due reminders claimed by one worker poll"
+    )
+    REMINDER_MAX_ATTEMPTS: int = Field(
+        default=5, description="Max delivery attempts before a reminder is marked permanently FAILED"
+    )
+    REMINDER_RETRY_BASE_SECONDS: int = Field(
+        default=60, description="Base delay for exponential backoff between reminder delivery retries"
+    )
+    REMINDER_RETRY_MAX_SECONDS: int = Field(
+        default=1800, description="Maximum backoff delay between reminder delivery retries"
+    )
+
     model_config = SettingsConfigDict(
         env_file=(
             ".env.local",

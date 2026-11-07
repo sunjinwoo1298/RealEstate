@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, String
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,3 +49,7 @@ class SiteVisit(Base, TimestampMixin):
     )
     booking_reference: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True)
+    # Incremented on every reschedule; VisitReminder rows carry the
+    # booking_version they were created for, so the reminder worker can
+    # detect a since-rescheduled visit and skip a stale reminder.
+    booking_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

@@ -15,6 +15,7 @@ from backend.models.project import Project
 from backend.models.site_visit import SiteVisit, SiteVisitStatus
 from backend.models.visit_event import VisitEvent, VisitEventType
 from backend.services.availability_service import AvailabilityService, IST
+from backend.services.reminder_service import ReminderService
 
 
 def _generate_booking_reference() -> str:
@@ -176,6 +177,8 @@ class BookingService:
         )
         lead.lead_status = LeadStatus.VISIT_BOOKED
 
+        ReminderService.schedule_reminders_for_visit(db, visit)
+
         await db.commit()
         await db.refresh(visit)
         return visit
@@ -244,6 +247,7 @@ class BookingService:
                 extra_metadata={},
             )
         )
+        await ReminderService.cancel_pending_reminders(db, visit.id)
         await db.commit()
         await db.refresh(visit)
         return visit
@@ -291,9 +295,12 @@ class BookingService:
         if executive_id is None:
             raise ConflictException("No executive is available for this slot")
 
+        await ReminderService.cancel_pending_reminders(db, visit.id)
+
         visit.start_time = new_start_time
         visit.end_time = new_end_time
         visit.executive_id = executive_id
+        visit.booking_version += 1
 
         db.add(
             VisitEvent(
@@ -309,6 +316,7 @@ class BookingService:
                 },
             )
         )
+        ReminderService.schedule_reminders_for_visit(db, visit)
         await db.commit()
         await db.refresh(visit)
         return visit
@@ -348,6 +356,8 @@ class BookingService:
         lead = lead_result.scalar_one_or_none()
         if lead is not None and status == SiteVisitStatus.COMPLETED:
             lead.lead_status = LeadStatus.VISIT_COMPLETED
+
+        await ReminderService.cancel_pending_reminders(db, visit.id)
 
         await db.commit()
         await db.refresh(visit)
