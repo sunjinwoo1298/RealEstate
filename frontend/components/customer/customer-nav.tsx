@@ -9,6 +9,7 @@ import { useCustomerAuth } from "@/lib/customer-auth-context";
 const NAV_ITEMS = [
   { href: "/customer/dashboard", label: "Dashboard" },
   { href: "/customer/chat", label: "Chat" },
+  { href: "/customer/visits", label: "Visits" },
   { href: "/customer/profile", label: "My Profile" },
   { href: "/projects", label: "Projects" },
   { href: "/customer/settings", label: "Settings" },
@@ -26,7 +27,9 @@ export function CustomerNav() {
   return (
     <nav className="flex items-center gap-1">
       {NAV_ITEMS.map((item) => {
-        const active = pathname === item.href || (item.href === "/customer/chat" && pathname?.startsWith("/customer/chat"));
+        const active =
+          pathname === item.href ||
+          ((item.href === "/customer/chat" || item.href === "/customer/visits") && pathname?.startsWith(item.href));
         return (
           <Link
             key={item.href}

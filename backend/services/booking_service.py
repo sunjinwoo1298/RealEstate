@@ -70,6 +70,7 @@ class BookingService:
         project_id: Optional[uuid.UUID] = None,
         executive_id: Optional[uuid.UUID] = None,
         status: Optional[SiteVisitStatus] = None,
+        upcoming: Optional[bool] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> Tuple[List[SiteVisit], int]:
@@ -85,6 +86,9 @@ class BookingService:
             filters.append(SiteVisit.executive_id == executive_id)
         if status is not None:
             filters.append(SiteVisit.status == status)
+        if upcoming is not None:
+            now = datetime.now(timezone.utc)
+            filters.append(SiteVisit.start_time >= now if upcoming else SiteVisit.start_time < now)
 
         for f in filters:
             query = query.where(f)

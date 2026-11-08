@@ -3,7 +3,16 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, Building2, Loader2, LogOut, MessageSquare, Settings as SettingsIcon, UserCircle2 } from "lucide-react";
+import {
+  AlertCircle,
+  Building2,
+  CalendarClock,
+  Loader2,
+  LogOut,
+  MessageSquare,
+  Settings as SettingsIcon,
+  UserCircle2,
+} from "lucide-react";
 import { useCustomerAuth } from "@/lib/customer-auth-context";
 import {
   customerApiClient,
@@ -183,13 +192,20 @@ export default function CustomerDashboardPage() {
       {/* D. Quick actions */}
       <div className="bg-white rounded-xl border border-[#E5E5DE] shadow-xs p-6">
         <h2 className="font-heading font-bold text-base text-[#202B28] mb-4">Quick actions</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
           <Link
             href="/customer/chat"
             className="flex flex-col items-center gap-2 p-4 rounded-lg border border-[#E5E5DE] hover:bg-[#F7F6F2] transition-colors text-center"
           >
             <MessageSquare className="w-5 h-5 text-[#173B35]" />
             <span className="text-xs font-semibold text-[#202B28]">Chat with us</span>
+          </Link>
+          <Link
+            href="/customer/visits/book"
+            className="flex flex-col items-center gap-2 p-4 rounded-lg border border-[#E5E5DE] hover:bg-[#F7F6F2] transition-colors text-center"
+          >
+            <CalendarClock className="w-5 h-5 text-[#173B35]" />
+            <span className="text-xs font-semibold text-[#202B28]">Book a Visit</span>
           </Link>
           <Link
             href="/customer/profile"
