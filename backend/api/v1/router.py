@@ -16,6 +16,7 @@ from backend.api.v1.endpoints.availability import (
 from backend.api.v1.endpoints.bookings import router as bookings_router
 from backend.api.v1.endpoints.handoffs import router as handoffs_router
 from backend.api.v1.endpoints.reminders import router as reminders_router
+from backend.api.v1.endpoints.analytics import router as analytics_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(health_router)
@@ -33,3 +34,4 @@ api_v1_router.include_router(admin_capacity_router)
 api_v1_router.include_router(bookings_router)
 api_v1_router.include_router(handoffs_router)
 api_v1_router.include_router(reminders_router)
+api_v1_router.include_router(analytics_router)

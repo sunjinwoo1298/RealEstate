@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHash
 
 from backend.core.config import settings
 

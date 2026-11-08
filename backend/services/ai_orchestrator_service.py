@@ -151,19 +151,34 @@ class AIOrchestratorService:
             logger.info(f"Skipping AI generation for conversation {conversation.id}: already processing")
             return OrchestratorResult(ai_message=None, skipped_reason="ALREADY_PROCESSING")
 
+        # Captured before any further DB activity in this session (the buyer's
+        # own message was already committed by the caller) -- expire_on_commit
+        # means conversation's attributes can become expired after a later
+        # commit/rollback in this same session, so the except blocks below log
+        # this plain value instead of touching the (possibly stale) ORM object.
+        conversation_id = conversation.id
         try:
-            return await asyncio.wait_for(
-                AIOrchestratorService._run_pipeline(db, conversation, lead, buyer_message_text),
-                timeout=settings.AI_RESPONSE_TIMEOUT_SECONDS,
-            )
+            return await AIOrchestratorService._run_pipeline(db, conversation, lead, buyer_message_text)
         except asyncio.TimeoutError:
-            logger.warning(f"AI pipeline timed out for conversation {conversation.id}")
+            # Only the individual Groq calls inside _run_pipeline are ever
+            # wrapped in a timeout -- never a DB flush/commit -- so reaching
+            # here means an LLM HTTP call was cancelled, not a DB write. No
+            # rollback() is needed (and none is done: rollback() always
+            # expires every attribute on `conversation`, which this session's
+            # expire_on_commit=False config deliberately avoids, and a plain
+            # attribute access on an expired object raises MissingGreenlet
+            # rather than lazy-loading under AsyncSession).
+            logger.warning(f"AI pipeline timed out for conversation {conversation_id}")
             return await AIOrchestratorService._persist_fallback(db, conversation, "TIMEOUT")
         except LLMProviderError as e:
-            logger.warning(f"AI pipeline LLM failure for conversation {conversation.id}: {e}")
+            logger.warning(f"AI pipeline LLM failure for conversation {conversation_id}: {e}")
             return await AIOrchestratorService._persist_fallback(db, conversation, "LLM_FAILURE")
         except Exception as e:  # noqa: BLE001 - never let an AI failure lose the buyer's message or crash the request
-            logger.exception(f"Unexpected AI pipeline failure for conversation {conversation.id}: {e}")
+            # Unlike the two branches above, this one can follow a genuine
+            # failed flush/commit (e.g. a DB constraint error inside a tool
+            # call), so the session really may need resetting here.
+            await db.rollback()
+            logger.exception(f"Unexpected AI pipeline failure for conversation {conversation_id}: {e}")
             return await AIOrchestratorService._persist_fallback(db, conversation, "UNEXPECTED_ERROR")
         finally:
             try:
@@ -186,10 +201,17 @@ class AIOrchestratorService:
         history = await AIOrchestratorService._load_history_messages(
             db, conversation.id, exclude_latest_content=buyer_message_text
         )
-        extraction_completion = await GroqClient.generate_structured(
-            system_prompt=EXTRACTION_SYSTEM_PROMPT,
-            messages=build_history_messages(history, latest_message=buyer_message_text),
-            schema=ExtractionResult,
+        # Timeouts wrap only this network call to Groq, never a DB flush/commit
+        # below -- cancelling a DB operation mid-flight (as a timeout around
+        # the whole pipeline used to risk) can leave the shared AsyncSession's
+        # transaction in an unrecoverable PendingRollbackError state.
+        extraction_completion = await asyncio.wait_for(
+            GroqClient.generate_structured(
+                system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                messages=build_history_messages(history, latest_message=buyer_message_text),
+                schema=ExtractionResult,
+            ),
+            timeout=settings.AI_RESPONSE_TIMEOUT_SECONDS,
         )
         extraction: ExtractionResult = extraction_completion.data
         if extraction.wants_human_handoff:
@@ -243,11 +265,14 @@ class AIOrchestratorService:
             language=reply_language, knowledge_context=knowledge_context
         )
 
-        reply_completion = await GroqClient.generate_structured(
-            system_prompt=response_system_prompt,
-            messages=build_history_messages(history, latest_message=buyer_message_text),
-            schema=OrchestratorReply,
-            temperature=0.4,
+        reply_completion = await asyncio.wait_for(
+            GroqClient.generate_structured(
+                system_prompt=response_system_prompt,
+                messages=build_history_messages(history, latest_message=buyer_message_text),
+                schema=OrchestratorReply,
+                temperature=0.4,
+            ),
+            timeout=settings.AI_RESPONSE_TIMEOUT_SECONDS,
         )
         reply: OrchestratorReply = reply_completion.data
         final_reply_text = enforce_reply_guardrails(reply.reply_text, language=reply_language, flags=guardrail_flags)
@@ -316,8 +341,16 @@ class AIOrchestratorService:
 
     @staticmethod
     async def _persist_fallback(db: AsyncSession, conversation: Conversation, reason: str) -> OrchestratorResult:
-        language = conversation.language.value
         try:
+            # Explicit, awaited reload rather than a bare attribute access:
+            # if the caller rolled back the session (the UNEXPECTED_ERROR
+            # path), `conversation`'s attributes are now expired, and a
+            # plain `conversation.language` would attempt an implicit lazy
+            # load that AsyncSession cannot perform outside an awaited call
+            # (raises MissingGreenlet). This refresh is a harmless extra
+            # round trip on the common, non-rolled-back path.
+            await db.refresh(conversation)
+            language = conversation.language.value
             ai_message = Message(
                 conversation_id=conversation.id,
                 sender_type=SenderType.AI,

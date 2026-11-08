@@ -254,6 +254,45 @@ async def test_llm_failure_persists_fallback_without_losing_buyer_message(client
 
 
 @pytest.mark.asyncio
+async def test_llm_timeout_persists_fallback_without_pending_rollback_error(client, db_session, monkeypatch):
+    """
+    Regression test: a prior bug wrapped asyncio.wait_for around the whole
+    pipeline (including DB commits), so a timeout could cancel a commit
+    mid-flush and leave the shared AsyncSession needing an explicit
+    rollback() before any further use -- the exception handler's own
+    `conversation.id` log access (an expired attribute after the earlier
+    buyer-message commit) then raised PendingRollbackError and turned a
+    clean timeout into an unhandled 500, losing the AI fallback reply.
+    Fixed by timing out only the individual Groq calls and rolling back
+    the session before touching the conversation object again.
+    """
+    import asyncio
+
+    create_resp = await _create_chat_session(client)
+    conversation_id = create_resp.json()["id"]
+    cookie = create_resp.cookies.get("estateflow_buyer_session")
+    client.cookies.set("estateflow_buyer_session", cookie)
+
+    monkeypatch.setattr(orchestrator_module.settings, "AI_RESPONSE_TIMEOUT_SECONDS", 0.05)
+
+    async def hang_generate_structured(*, system_prompt, messages, schema, temperature=0.2, max_tokens=1024):
+        await asyncio.sleep(2)
+        raise AssertionError("should have been cancelled by the timeout before returning")
+
+    monkeypatch.setattr(orchestrator_module.GroqClient, "generate_structured", hang_generate_structured)
+
+    resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/messages", json={"content": "Hello?"})
+    assert resp.status_code == 201  # not a 500 -- the timeout must not surface as PendingRollbackError
+
+    messages_resp = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")
+    items = messages_resp.json()["items"]
+    assert len(items) == 2
+    assert items[0]["sender_type"] == "BUYER"
+    assert items[1]["sender_type"] == "AI"
+    assert items[1]["metadata"]["failure_reason"] == "TIMEOUT"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_ai_processing_is_prevented_by_lock(client, db_session, monkeypatch):
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]
