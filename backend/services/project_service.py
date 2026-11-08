@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import ConflictException, NotFoundException
-from backend.models.project import Project
+from backend.models.project import Project, ProjectVisibility
 
 
 class ProjectService:
@@ -20,7 +20,15 @@ class ProjectService:
         if existing.scalar_one_or_none() is not None:
             raise ConflictException("A project with this name already exists")
 
-        project = Project(name=name.strip(), description=description, location=location, is_active=True)
+        # New projects always start DRAFT -- only an explicit ADMIN publish
+        # action (ProjectService.update_project) can make one publicly visible.
+        project = Project(
+            name=name.strip(),
+            description=description,
+            location=location,
+            is_active=True,
+            visibility_status=ProjectVisibility.DRAFT,
+        )
         db.add(project)
         await db.commit()
         await db.refresh(project)
@@ -66,6 +74,15 @@ class ProjectService:
         description: Optional[str] = None,
         location: Optional[str] = None,
         is_active: Optional[bool] = None,
+        visibility_status: Optional[ProjectVisibility] = None,
+        is_featured: Optional[bool] = None,
+        configurations: Optional[List[str]] = None,
+        amenities: Optional[List[str]] = None,
+        images: Optional[List[str]] = None,
+        starting_price_label: Optional[str] = None,
+        price_display_approved: Optional[bool] = None,
+        rera_number: Optional[str] = None,
+        floor_plan_url: Optional[str] = None,
     ) -> Project:
         project = await ProjectService.get_project(db, project_id)
         if name is not None:
@@ -76,6 +93,24 @@ class ProjectService:
             project.location = location
         if is_active is not None:
             project.is_active = is_active
+        if visibility_status is not None:
+            project.visibility_status = visibility_status
+        if is_featured is not None:
+            project.is_featured = is_featured
+        if configurations is not None:
+            project.configurations = configurations
+        if amenities is not None:
+            project.amenities = amenities
+        if images is not None:
+            project.images = images
+        if starting_price_label is not None:
+            project.starting_price_label = starting_price_label
+        if price_display_approved is not None:
+            project.price_display_approved = price_display_approved
+        if rera_number is not None:
+            project.rera_number = rera_number
+        if floor_plan_url is not None:
+            project.floor_plan_url = floor_plan_url
         await db.commit()
         await db.refresh(project)
         return project

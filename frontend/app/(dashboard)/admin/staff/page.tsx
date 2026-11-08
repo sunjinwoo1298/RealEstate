@@ -23,7 +23,7 @@ export default function StaffAccountsPage() {
 
   useEffect(() => {
     if (user && user.role !== "ADMIN") {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [user, router]);
 

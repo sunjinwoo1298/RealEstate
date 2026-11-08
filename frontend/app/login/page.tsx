@@ -17,7 +17,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!isLoading && user) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [isLoading, user, router]);
 
@@ -27,7 +27,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace("/");
+      router.replace("/dashboard");
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Unable to sign in. Please try again."

@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.config import settings
 from backend.core.database import get_db
 from backend.core.exceptions import ForbiddenException, UnauthorizedException
-from backend.core.security import decode_access_token
+from backend.core.security import decode_access_token, decode_customer_access_token
 from backend.models.conversation import Conversation
+from backend.models.customer_account import CustomerAccount, CustomerAccountStatus
 from backend.models.user import User, UserRole
 from backend.services.buyer_session_service import BuyerSessionService
 from backend.services.conversation_service import ConversationService
@@ -124,6 +125,43 @@ async def get_booking_principal(
     session = await BuyerSessionService.validate_session(db, raw_token)
     conversation = await ConversationService.get_conversation_by_id(db, session.conversation_id)
     return BookingPrincipal(user=None, buyer_lead_id=conversation.lead_id)
+
+
+async def get_current_customer(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    db: AsyncSession = Depends(get_db_session),
+) -> CustomerAccount:
+    """
+    CustomerPrincipal: resolves the authenticated customer from a customer
+    access JWT. Distinct from `get_current_user` (StaffPrincipal) and
+    `get_buyer_conversation` (BuyerSessionPrincipal) -- a staff bearer token
+    or a buyer-session cookie can never satisfy this dependency, since
+    `decode_customer_access_token` only accepts tokens carrying the
+    "customer_access" type claim. Never infers identity from a
+    caller-supplied id; the token's own `sub` claim is the sole source.
+    """
+    if credentials is None or not credentials.credentials:
+        raise UnauthorizedException("Authentication required")
+
+    try:
+        payload = decode_customer_access_token(credentials.credentials)
+    except jwt.ExpiredSignatureError:
+        raise UnauthorizedException("Access token has expired")
+    except jwt.PyJWTError:
+        raise UnauthorizedException("Invalid access token")
+
+    try:
+        customer_account_id = uuid.UUID(payload.get("sub", ""))
+    except (ValueError, TypeError):
+        raise UnauthorizedException("Invalid access token")
+
+    result = await db.execute(select(CustomerAccount).where(CustomerAccount.id == customer_account_id))
+    customer = result.scalar_one_or_none()
+
+    if customer is None or customer.status != CustomerAccountStatus.ACTIVE:
+        raise UnauthorizedException("Account is not available")
+
+    return customer
 
 
 def verify_same_origin(request: Request) -> None:

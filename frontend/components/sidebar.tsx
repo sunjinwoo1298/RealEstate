@@ -30,7 +30,7 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { label: "Dashboard", href: "/", icon: LayoutDashboard },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Leads", href: "/leads", icon: Users },
   { label: "Conversations", href: "/conversations", icon: MessageSquare },
   { label: "Handoff Queue", href: "/handoff", icon: Headset },
@@ -61,7 +61,7 @@ export function Sidebar() {
     >
       {/* Brand Header */}
       <div className="h-16 flex items-center justify-between px-4 border-b border-[#1b3d37]">
-        <Link href="/" className="flex items-center gap-3 overflow-hidden">
+        <Link href="/dashboard" className="flex items-center gap-3 overflow-hidden">
           <div className="w-9 h-9 rounded-lg bg-[#C47A55] flex items-center justify-center shrink-0 shadow-sm">
             <Building2 className="w-5 h-5 text-white" />
           </div>

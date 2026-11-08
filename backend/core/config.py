@@ -101,6 +101,67 @@ class Settings(BaseSettings):
         default=30, description="TTL for the per-conversation AI-processing lock that prevents duplicate AI replies on retry"
     )
 
+    # Customer authentication & identity (Feature 10)
+    FRONTEND_BASE_URL: str = Field(
+        default="http://localhost:3000", description="Frontend base URL used to build links in transactional emails"
+    )
+    CUSTOMER_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=15, description="Customer access token lifetime in minutes")
+    CUSTOMER_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=30, description="Customer refresh token lifetime in days")
+    CUSTOMER_REFRESH_COOKIE_NAME: str = Field(
+        default="estateflow_customer_refresh_token", description="Customer refresh token cookie name"
+    )
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = Field(
+        default=24, description="Customer email-verification token lifetime in hours"
+    )
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=30, description="Customer password-reset token lifetime in minutes"
+    )
+    CUSTOMER_REGISTRATION_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=5, description="Max customer registration attempts per window per IP"
+    )
+    CUSTOMER_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=3600, description="Customer registration rate limit window in seconds"
+    )
+    CUSTOMER_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=5, description="Max failed customer login attempts per window"
+    )
+    CUSTOMER_LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=300, description="Customer login rate limit window in seconds"
+    )
+    CUSTOMER_VERIFICATION_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=5, description="Max email verification/resend requests per window per identifier"
+    )
+    CUSTOMER_VERIFICATION_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=3600, description="Customer email verification rate limit window in seconds"
+    )
+    CUSTOMER_PASSWORD_RESET_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=5, description="Max password-reset requests per window per identifier"
+    )
+    CUSTOMER_PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=3600, description="Customer password-reset rate limit window in seconds"
+    )
+
+    # Customer chat (Feature 12) -- rate limits keyed per authenticated
+    # customer, distinct from the anonymous buyer-chat limiters above.
+    CUSTOMER_CONVERSATION_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=10, description="Max customer conversation-creation attempts per window per customer"
+    )
+    CUSTOMER_CONVERSATION_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=300, description="Customer conversation-creation rate limit window in seconds"
+    )
+    CUSTOMER_CHAT_MESSAGE_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=30, description="Max customer chat messages per window per conversation"
+    )
+    CUSTOMER_CHAT_MESSAGE_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=60, description="Customer chat message rate limit window in seconds"
+    )
+    CUSTOMER_HANDOFF_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=5, description="Max customer handoff requests per window per customer"
+    )
+    CUSTOMER_HANDOFF_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=300, description="Customer handoff-request rate limit window in seconds"
+    )
+
     # Site-visit reminders (Feature 07)
     REMINDER_WORKER_POLL_INTERVAL_SECONDS: int = Field(
         default=30, description="How often the reminder worker polls for due reminders"

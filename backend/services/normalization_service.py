@@ -29,6 +29,19 @@ def normalize_phone(raw_phone: str, region: str = DEFAULT_REGION) -> str:
     return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
+def normalize_phone_optional(raw_phone: Optional[str], region: str = DEFAULT_REGION) -> Optional[str]:
+    """
+    Same validation/normalization as normalize_phone, but returns None instead
+    of raising when no phone was supplied at all. For flows where a phone
+    number is genuinely optional (e.g. customer registration) -- a phone that
+    IS supplied is still validated with the same strictness as every other
+    ingestion channel.
+    """
+    if raw_phone is None or not raw_phone.strip():
+        return None
+    return normalize_phone(raw_phone, region)
+
+
 def normalize_email(raw_email: Optional[str]) -> Optional[str]:
     """Normalizes an email address by trimming whitespace and lowercasing it."""
     if raw_email is None:

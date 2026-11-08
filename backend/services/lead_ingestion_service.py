@@ -11,7 +11,7 @@ from backend.core.logging import logger
 from backend.models.lead import ConsentStatus, Lead
 from backend.models.lead_source import LeadSource, SourceType
 from backend.services.identity_resolution_service import IdentityResolutionService, ResolutionResult
-from backend.services.normalization_service import normalize_email, normalize_phone
+from backend.services.normalization_service import normalize_email, normalize_phone_optional
 
 
 @dataclass
@@ -35,7 +35,7 @@ class LeadIngestionService:
         db: AsyncSession,
         *,
         full_name: str,
-        raw_phone: str,
+        raw_phone: Optional[str],
         raw_email: Optional[str],
         preferred_language: Optional[str],
         source_type: SourceType,
@@ -45,7 +45,7 @@ class LeadIngestionService:
         submitted_at: Optional[datetime] = None,
         consent_status: ConsentStatus = ConsentStatus.NOT_RECORDED,
     ) -> IngestionResult:
-        normalized_phone = normalize_phone(raw_phone)
+        normalized_phone = normalize_phone_optional(raw_phone)
         normalized_email_value = normalize_email(raw_email)
 
         resolution = await IdentityResolutionService.resolve_or_create(

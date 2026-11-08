@@ -9,14 +9,16 @@ from backend.models.user import UserRole
 from backend.schemas.project import ProjectCreateRequest, ProjectListResponse, ProjectPublic, ProjectUpdateRequest
 from backend.services.project_service import ProjectService
 
-router = APIRouter(
-    prefix="/admin/projects",
-    tags=["Admin - Projects"],
-    dependencies=[Depends(require_roles(UserRole.ADMIN))],
-)
+router = APIRouter(prefix="/admin/projects", tags=["Admin - Projects"])
+
+# Viewing the catalog (including publication status) is open to ADMIN and
+# MANAGER per spec section 4 ("Managers may view project publication
+# status"); creating, editing and publishing stays ADMIN-only.
+_view_roles = Depends(require_roles(UserRole.ADMIN, UserRole.MANAGER))
+_manage_roles = Depends(require_roles(UserRole.ADMIN))
 
 
-@router.get("", response_model=ProjectListResponse, summary="List real-estate projects")
+@router.get("", response_model=ProjectListResponse, summary="List real-estate projects", dependencies=[_view_roles])
 async def list_projects(
     is_active: Optional[bool] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
@@ -27,7 +29,13 @@ async def list_projects(
     return ProjectListResponse(items=[ProjectPublic.model_validate(p) for p in projects], total=total)
 
 
-@router.post("", response_model=ProjectPublic, status_code=status.HTTP_201_CREATED, summary="Create a project")
+@router.post(
+    "",
+    response_model=ProjectPublic,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a project",
+    dependencies=[_manage_roles],
+)
 async def create_project(
     payload: ProjectCreateRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -38,7 +46,9 @@ async def create_project(
     return ProjectPublic.model_validate(project)
 
 
-@router.get("/{project_id}", response_model=ProjectPublic, summary="Get project detail")
+@router.get(
+    "/{project_id}", response_model=ProjectPublic, summary="Get project detail", dependencies=[_view_roles]
+)
 async def get_project(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
@@ -47,7 +57,12 @@ async def get_project(
     return ProjectPublic.model_validate(project)
 
 
-@router.patch("/{project_id}", response_model=ProjectPublic, summary="Update a project")
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectPublic,
+    summary="Update a project, including publication status and public listing fields",
+    dependencies=[_manage_roles],
+)
 async def update_project(
     project_id: uuid.UUID,
     payload: ProjectUpdateRequest,
@@ -60,5 +75,14 @@ async def update_project(
         description=payload.description,
         location=payload.location,
         is_active=payload.is_active,
+        visibility_status=payload.visibility_status,
+        is_featured=payload.is_featured,
+        configurations=payload.configurations,
+        amenities=payload.amenities,
+        images=payload.images,
+        starting_price_label=payload.starting_price_label,
+        price_display_approved=payload.price_display_approved,
+        rera_number=payload.rera_number,
+        floor_plan_url=payload.floor_plan_url,
     )
     return ProjectPublic.model_validate(project)

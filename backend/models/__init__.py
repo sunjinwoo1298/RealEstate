@@ -15,7 +15,7 @@ from backend.models.conversation import (
 )
 from backend.models.message import Message, SenderType, MessageType
 from backend.models.buyer_session import BuyerSession
-from backend.models.project import Project
+from backend.models.project import Project, ProjectVisibility
 from backend.models.knowledge_document import KnowledgeDocument, ApprovalStatus
 from backend.models.knowledge_chunk import KnowledgeChunk
 from backend.models.lead_qualification import LeadQualification, ConfigurationType, PurchasePurpose
@@ -28,6 +28,9 @@ from backend.models.handoff import Handoff, HandoffStatus, HandoffReason
 from backend.models.conversation_assignment import ConversationAssignment, AssignmentStatus
 from backend.models.notification import Notification, NotificationType, NotificationStatus
 from backend.models.visit_reminder import VisitReminder, ReminderType, ReminderStatus
+from backend.models.customer_account import CustomerAccount, CustomerAccountStatus
+from backend.models.customer_session import CustomerSession
+from backend.models.customer_verification_token import CustomerVerificationToken, TokenPurpose
 
 __all__ = [
     "Base",
@@ -54,6 +57,7 @@ __all__ = [
     "MessageType",
     "BuyerSession",
     "Project",
+    "ProjectVisibility",
     "KnowledgeDocument",
     "ApprovalStatus",
     "KnowledgeChunk",
@@ -78,4 +82,9 @@ __all__ = [
     "VisitReminder",
     "ReminderType",
     "ReminderStatus",
+    "CustomerAccount",
+    "CustomerAccountStatus",
+    "CustomerSession",
+    "CustomerVerificationToken",
+    "TokenPurpose",
 ]

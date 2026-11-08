@@ -77,6 +77,14 @@ class Conversation(Base, TimestampMixin):
         default=ConversationState.DISCOVERY,
     )
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Nullable: NULL means an anonymous buyer-chat conversation (Feature 03),
+    # unchanged by this feature. A non-null value means the conversation was
+    # created by an authenticated customer (Feature 12) and access to it must
+    # be authorized solely by this column, never by lead_id or a caller
+    # supplied id.
+    customer_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     lead: Mapped["Lead"] = relationship("Lead")
     messages: Mapped[List["Message"]] = relationship(
