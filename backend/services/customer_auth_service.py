@@ -44,7 +44,11 @@ class CustomerAuthService:
         phone: Optional[str],
         accepted_privacy_policy: bool,
         marketing_consent: bool,
-    ) -> Tuple[CustomerAccount, str]:
+    ) -> Optional[Tuple[CustomerAccount, str]]:
+        """
+        Returns None when the email is already registered, so the caller can
+        answer exactly as for a new signup (no account-existence oracle).
+        """
         if not accepted_privacy_policy:
             raise ValidationException("You must accept the privacy policy and terms to create an account")
 
@@ -56,7 +60,7 @@ class CustomerAuthService:
             select(CustomerAccount).where(CustomerAccount.normalized_email == normalized_email)
         )
         if existing.scalar_one_or_none() is not None:
-            raise ConflictException("An account with this email already exists")
+            return None
 
         now = datetime.now(timezone.utc)
         customer = CustomerAccount(
@@ -75,7 +79,7 @@ class CustomerAuthService:
             await db.flush()
         except IntegrityError:
             await db.rollback()
-            raise ConflictException("An account with this email already exists")
+            return None
 
         _, raw_token = await CustomerVerificationService.issue_token(
             db, customer.id, TokenPurpose.EMAIL_VERIFICATION

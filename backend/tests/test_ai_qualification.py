@@ -205,6 +205,63 @@ async def test_human_handoff_request_sets_pending_assignment(client, db_session,
 
 
 @pytest.mark.asyncio
+async def test_pricing_request_hands_off_even_when_reply_quotes_no_figure(client, db_session, monkeypatch):
+    # Regression (E2E round 4): the LLM answered a price/discount question
+    # without a figure and told the buyer it was "connecting" them, but no
+    # handoff was created. Pricing asks must always be escalated (Feature 06).
+    create_resp = await _create_chat_session(client)
+    conversation_id = create_resp.json()["id"]
+    cookie = create_resp.cookies.get("estateflow_buyer_session")
+    client.cookies.set("estateflow_buyer_session", cookie)
+
+    _mock_groq(
+        monkeypatch,
+        extraction=ExtractionResult(detected_language="EN", intent="PRICING_OR_DISCOUNT_REQUEST"),
+        reply=OrchestratorReply(
+            reply_text="I don't have the exact pricing. A salesperson will confirm the final price and offers.",
+            language="EN",
+        ),
+    )
+    resp = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "What is the final price of a 3 BHK? Can I get a 10% discount?"},
+    )
+    assert resp.status_code == 201
+
+    conversation = await db_session.get(Conversation, uuid.UUID(conversation_id))
+    await db_session.refresh(conversation)
+    assert conversation.ownership_status == OwnershipStatus.PENDING_ASSIGNMENT
+
+    messages_resp = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")
+    ai_message = [m for m in messages_resp.json()["items"] if m["sender_type"] == "AI"][0]
+    assert ai_message["metadata"]["handoff_reason"] == "UNSUPPORTED_QUERY"
+    assert "connecting you" in ai_message["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_project_question_mentioning_offer_does_not_hand_off(client, db_session, monkeypatch):
+    create_resp = await _create_chat_session(client)
+    conversation_id = create_resp.json()["id"]
+    cookie = create_resp.cookies.get("estateflow_buyer_session")
+    client.cookies.set("estateflow_buyer_session", cookie)
+
+    _mock_groq(
+        monkeypatch,
+        extraction=ExtractionResult(detected_language="EN", intent="OTHER"),
+        reply=OrchestratorReply(reply_text="Happy to help with project details.", language="EN"),
+    )
+    resp = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "Which amenities do you offer?"},
+    )
+    assert resp.status_code == 201
+
+    conversation = await db_session.get(Conversation, uuid.UUID(conversation_id))
+    await db_session.refresh(conversation)
+    assert conversation.ownership_status == OwnershipStatus.AI_ACTIVE
+
+
+@pytest.mark.asyncio
 async def test_no_ai_response_when_conversation_is_human_owned(client, db_session, monkeypatch):
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]

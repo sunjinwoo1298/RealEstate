@@ -99,7 +99,7 @@ async def register(
     client_ip = request.client.host if request.client else "unknown"
     await enforce_customer_registration_rate_limit(client_ip)
 
-    customer, raw_token = await CustomerAuthService.register(
+    registration = await CustomerAuthService.register(
         db,
         full_name=payload.full_name,
         email=payload.email,
@@ -108,11 +108,15 @@ async def register(
         accepted_privacy_policy=payload.accepted_privacy_policy,
         marketing_consent=payload.marketing_consent,
     )
-    await _send_verification_email(customer.email, raw_token)
+    # An already-registered email gets the identical response (and no email),
+    # so the endpoint cannot be used to discover which addresses have accounts.
+    if registration is not None:
+        customer, raw_token = registration
+        await _send_verification_email(customer.email, raw_token)
 
     return CustomerRegisterResponse(
         message="Account created. Please check your email to verify your address before signing in.",
-        email=customer.email,
+        email=payload.email,
     )
 
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -56,6 +56,7 @@ export default function CustomerVisitDetailPage() {
   const [rescheduleSlots, setRescheduleSlots] = useState<CustomerAvailableSlot[] | null>(null);
   const [rescheduleSlotsLoading, setRescheduleSlotsLoading] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<CustomerAvailableSlot | null>(null);
+  const rescheduleSlotsRequestRef = useRef(0);
   const [rescheduling, setRescheduling] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
 
@@ -94,16 +95,21 @@ export default function CustomerVisitDetailPage() {
 
   const loadRescheduleSlots = useCallback(async () => {
     if (!visit) return;
+    // Ignore responses from superseded requests (an earlier date's slots
+    // resolving after the current date's would otherwise replace them).
+    const requestId = ++rescheduleSlotsRequestRef.current;
     setRescheduleSlots(null);
     setRescheduleSlotsLoading(true);
     setSelectedSlot(null);
     try {
       const result = await customerApiClient.getVisitAvailability(visit.project_id, rescheduleDate);
-      setRescheduleSlots(result.slots);
+      if (requestId === rescheduleSlotsRequestRef.current) setRescheduleSlots(result.slots);
     } catch (err) {
-      setRescheduleError(err instanceof CustomerApiError ? err.message : "Unable to load available slots.");
+      if (requestId === rescheduleSlotsRequestRef.current) {
+        setRescheduleError(err instanceof CustomerApiError ? err.message : "Unable to load available slots.");
+      }
     } finally {
-      setRescheduleSlotsLoading(false);
+      if (requestId === rescheduleSlotsRequestRef.current) setRescheduleSlotsLoading(false);
     }
   }, [visit, rescheduleDate]);
 

@@ -28,6 +28,41 @@ async def _advisory_lock_conversation(db: AsyncSession, conversation_id: uuid.UU
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": str(conversation_id)})
 
 
+def build_handoff_summary(
+    lead: Lead,
+    qualification: Optional[LeadQualification],
+    buyer_message_text: Optional[str],
+    reason: HandoffReason,
+) -> str:
+    """
+    A concise, structured handoff summary built only from data already
+    captured for this buyer -- never invents amenities, prices or
+    commitments. Surfaced to the sales executive via HandoffDetail.
+    """
+    parts = [f"Escalation reason: {reason.value.replace('_', ' ').title()}."]
+    contact = lead.normalized_phone or lead.normalized_email or "no contact on file"
+    parts.append(f"Buyer: {lead.full_name} ({contact}).")
+
+    if qualification is not None:
+        details = []
+        if qualification.configuration:
+            details.append(f"configuration {qualification.configuration.value.replace('_', ' ')}")
+        if qualification.budget_min or qualification.budget_max:
+            details.append("budget captured")
+        if qualification.purchase_purpose:
+            details.append(f"purpose {qualification.purchase_purpose.value.replace('_', ' ').lower()}")
+        if qualification.preferred_visit_date:
+            details.append(f"wants to visit around {qualification.preferred_visit_date.isoformat()}")
+        if details:
+            parts.append("Qualification: " + ", ".join(details) + ".")
+
+    if buyer_message_text:
+        trimmed = buyer_message_text.strip().replace("\n", " ")[:280]
+        if trimmed:
+            parts.append(f'Latest message: "{trimmed}"')
+    return " ".join(parts)
+
+
 class HandoffService:
     """
     Escalation lifecycle only -- who gets assigned is AssignmentService's
@@ -78,6 +113,23 @@ class HandoffService:
             raise ConflictException(
                 f"Cannot request a handoff while ownership is {conversation.ownership_status.value}"
             )
+
+        if not summary:
+            # Callers that escalate without their own summary (e.g. the buyer's
+            # "talk to a salesperson" button) still hand the executive context.
+            from backend.models.message import Message, SenderType
+            from backend.services.qualification_service import QualificationService
+
+            qualification = await QualificationService.get_for_lead(db, lead.id)
+            latest_buyer = (
+                await db.execute(
+                    select(Message.content)
+                    .where(Message.conversation_id == conversation.id, Message.sender_type == SenderType.BUYER)
+                    .order_by(Message.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            summary = build_handoff_summary(lead, qualification, latest_buyer, reason)
 
         handoff = Handoff(
             conversation_id=conversation.id,

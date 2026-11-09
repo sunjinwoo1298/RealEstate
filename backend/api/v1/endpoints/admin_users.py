@@ -3,8 +3,8 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.deps import get_db_session, require_roles
-from backend.models.user import UserRole
+from backend.api.deps import get_current_user, get_db_session, require_roles
+from backend.models.user import User, UserRole
 from backend.schemas.user import (
     UserCreateRequest,
     UserListResponse,
@@ -51,8 +51,11 @@ async def update_user(
     user_id: uuid.UUID,
     payload: UserUpdateRequest,
     db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
 ) -> UserPublic:
-    user = await UserService.update_user(db, user_id, full_name=payload.full_name, role=payload.role)
+    user = await UserService.update_user(
+        db, user_id, full_name=payload.full_name, role=payload.role, acting_user_id=current_user.id
+    )
     return UserPublic.model_validate(user)
 
 
@@ -61,6 +64,7 @@ async def update_user_status(
     user_id: uuid.UUID,
     payload: UserStatusUpdateRequest,
     db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
 ) -> UserPublic:
-    user = await UserService.set_active_status(db, user_id, payload.is_active)
+    user = await UserService.set_active_status(db, user_id, payload.is_active, acting_user_id=current_user.id)
     return UserPublic.model_validate(user)

@@ -65,6 +65,12 @@ async def create_manual_lead(
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> IngestionResponse:
+    # Read the actor before ingesting: on a concurrent duplicate insert,
+    # ingestion rolls the session back, which expires every loaded ORM object
+    # (current_user included); touching its attributes afterwards would
+    # trigger an async lazy load and fail with MissingGreenlet (HTTP 500).
+    actor_is_scoped = LeadService.is_scoped_to_assigned_leads(current_user)
+    actor_id = current_user.id
     result = await LeadIngestionService.ingest(
         db,
         full_name=payload.full_name,
@@ -80,18 +86,14 @@ async def create_manual_lead(
     # Sales executives only see leads assigned to them, so a brand-new buyer
     # an executive enters by hand is assigned to that executive. A match to an
     # existing buyer keeps its current assignment untouched.
-    if (
-        LeadService.is_scoped_to_assigned_leads(current_user)
-        and result.created_new_lead
-        and result.lead.assigned_executive_id is None
-    ):
+    if actor_is_scoped and result.created_new_lead and result.lead.assigned_executive_id is None:
         await LeadService.update_lead(
             db,
             result.lead.id,
             full_name=None,
             preferred_language=None,
             lead_status=None,
-            assigned_executive_id=current_user.id,
+            assigned_executive_id=actor_id,
             consent_status=None,
         )
     return IngestionResponse(

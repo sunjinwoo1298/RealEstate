@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -63,6 +63,7 @@ export default function BookSiteVisitPage() {
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<CustomerAvailableSlot | null>(null);
+  const slotsRequestRef = useRef(0);
 
   const [idempotencyKey, setIdempotencyKey] = useState(() => newIdempotencyKey());
   const [submitting, setSubmitting] = useState(false);
@@ -93,17 +94,23 @@ export default function BookSiteVisitPage() {
 
   const loadSlots = useCallback(async () => {
     if (!selectedProject) return;
+    // Only the latest request may update state: an older request (e.g. for
+    // the previously selected date) can resolve after a newer one and would
+    // otherwise show -- and let the buyer pick -- another day's slots.
+    const requestId = ++slotsRequestRef.current;
     setSlots(null);
     setSlotsLoading(true);
     setSlotsError(null);
     setSelectedSlot(null);
     try {
       const result = await customerApiClient.getVisitAvailability(selectedProject.id, date);
-      setSlots(result.slots);
+      if (requestId === slotsRequestRef.current) setSlots(result.slots);
     } catch (err) {
-      setSlotsError(err instanceof CustomerApiError ? err.message : "Unable to load available slots.");
+      if (requestId === slotsRequestRef.current) {
+        setSlotsError(err instanceof CustomerApiError ? err.message : "Unable to load available slots.");
+      }
     } finally {
-      setSlotsLoading(false);
+      if (requestId === slotsRequestRef.current) setSlotsLoading(false);
     }
   }, [selectedProject, date]);
 

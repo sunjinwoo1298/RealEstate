@@ -10,7 +10,6 @@ import {
   CalendarDays,
   FileText,
   BarChart3,
-  Settings,
   ChevronLeft,
   ChevronRight,
   Building2,
@@ -39,7 +38,6 @@ const navItems: NavItem[] = [
   { label: "Knowledge Base", href: "/knowledge", icon: FileText, roles: ["ADMIN"] },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Staff Accounts", href: "/admin/staff", icon: UserCog, roles: ["ADMIN"] },
-  { label: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function Sidebar() {

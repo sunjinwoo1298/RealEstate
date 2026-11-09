@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { CalendarDays, Clock, Plus, RefreshCw, X } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -110,6 +110,7 @@ export default function SiteVisitsPage() {
   const [bookingLeadId, setBookingLeadId] = useState("");
   const [bookingDate, setBookingDate] = useState("");
   const [slots, setSlots] = useState<AvailableSlotPublic[]>([]);
+  const slotsRequestRef = useRef(0);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -148,16 +149,23 @@ export default function SiteVisitsPage() {
 
   const loadSlots = async () => {
     if (!bookingProjectId || !bookingDate) return;
+    // Only the latest request may update the slot list: a click on a slot
+    // books it immediately, so a slower response for a previously selected
+    // project/date must never replace the current one.
+    const requestId = ++slotsRequestRef.current;
+    setSlots([]);
     setSlotsLoading(true);
     setFormError(null);
     try {
       const data = await apiClient.getAvailableSlots({ project_id: bookingProjectId, date: bookingDate });
-      setSlots(data.slots);
+      if (requestId === slotsRequestRef.current) setSlots(data.slots);
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : "Failed to load available slots.");
-      setSlots([]);
+      if (requestId === slotsRequestRef.current) {
+        setFormError(err instanceof ApiError ? err.message : "Failed to load available slots.");
+        setSlots([]);
+      }
     } finally {
-      setSlotsLoading(false);
+      if (requestId === slotsRequestRef.current) setSlotsLoading(false);
     }
   };
 
@@ -185,8 +193,9 @@ export default function SiteVisitsPage() {
       });
       setShowNewBooking(false);
       setBookingLeadId("");
-      setSlots([]);
-      await loadVisits();
+      // Refresh (rather than clear) the slots: the project/date stay selected,
+      // so reopening the form would otherwise say "No slots available".
+      await Promise.all([loadVisits(), loadSlots()]);
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : "Failed to create booking.");
     } finally {

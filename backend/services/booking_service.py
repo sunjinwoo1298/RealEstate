@@ -104,6 +104,22 @@ class BookingService:
         return list(result.scalars().all()), total
 
     @staticmethod
+    def _replay_idempotent_booking(
+        existing: SiteVisit, *, lead_id: uuid.UUID, project_id: uuid.UUID, start_time: datetime
+    ) -> SiteVisit:
+        """
+        An idempotency key may only replay the *same* request. Reusing it for a
+        different buyer/project/time is a client error, not a silent replay.
+        """
+        same_request = existing.lead_id == lead_id and existing.project_id == project_id
+        if same_request and existing.booking_version == 1:
+            # Once rescheduled, the stored time legitimately differs from the original request.
+            same_request = start_time.tzinfo is not None and existing.start_time == start_time
+        if not same_request:
+            raise ConflictException("This Idempotency-Key was already used for a different booking request")
+        return existing
+
+    @staticmethod
     async def book_site_visit(
         db: AsyncSession,
         *,
@@ -116,7 +132,9 @@ class BookingService:
         if idempotency_key:
             existing = await BookingService.get_by_idempotency_key(db, idempotency_key)
             if existing is not None:
-                return existing
+                return BookingService._replay_idempotent_booking(
+                    existing, lead_id=lead_id, project_id=project_id, start_time=start_time
+                )
 
         if start_time.tzinfo is None:
             raise ValidationException("start_time must include timezone information")
@@ -165,7 +183,9 @@ class BookingService:
             if idempotency_key:
                 existing = await BookingService.get_by_idempotency_key(db, idempotency_key)
                 if existing is not None:
-                    return existing
+                    return BookingService._replay_idempotent_booking(
+                        existing, lead_id=lead_id, project_id=project_id, start_time=start_time
+                    )
             raise ConflictException("This slot is no longer available")
 
         db.add(

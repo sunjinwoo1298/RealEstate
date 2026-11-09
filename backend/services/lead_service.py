@@ -98,7 +98,12 @@ class LeadService:
         total_result = await db.execute(count_query)
         total = total_result.scalar_one()
 
-        new_count_result = await db.execute(select(func.count()).select_from(Lead).where(Lead.lead_status == LeadStatus.NEW))
+        # Same visibility scope as the list itself: a Sales Executive's
+        # "new" count must only cover the leads assigned to them.
+        new_count_query = select(func.count()).select_from(Lead).where(Lead.lead_status == LeadStatus.NEW)
+        if assigned_executive_id is not None:
+            new_count_query = new_count_query.where(Lead.assigned_executive_id == assigned_executive_id)
+        new_count_result = await db.execute(new_count_query)
         new_count = new_count_result.scalar_one()
 
         base_query = (

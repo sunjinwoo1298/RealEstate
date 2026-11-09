@@ -53,10 +53,30 @@ class UserService:
         return user
 
     @staticmethod
+    async def _ensure_not_last_active_admin(db: AsyncSession, user: User) -> None:
+        if user.role != UserRole.ADMIN or not user.is_active:
+            return
+        active_admins = (
+            await db.execute(
+                select(func.count()).select_from(User).where(User.role == UserRole.ADMIN, User.is_active.is_(True))
+            )
+        ).scalar_one()
+        if active_admins <= 1:
+            raise ConflictException("This is the last active admin account and cannot be deactivated or demoted")
+
+    @staticmethod
     async def update_user(
-        db: AsyncSession, user_id: uuid.UUID, full_name: Optional[str], role: Optional[UserRole]
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        full_name: Optional[str],
+        role: Optional[UserRole],
+        acting_user_id: Optional[uuid.UUID] = None,
     ) -> User:
         user = await UserService.get_user_by_id(db, user_id)
+        if role is not None and role != user.role and user.role == UserRole.ADMIN:
+            if acting_user_id is not None and acting_user_id == user.id:
+                raise ConflictException("You cannot change your own role")
+            await UserService._ensure_not_last_active_admin(db, user)
         if full_name is not None:
             user.full_name = full_name
         if role is not None:
@@ -66,8 +86,14 @@ class UserService:
         return user
 
     @staticmethod
-    async def set_active_status(db: AsyncSession, user_id: uuid.UUID, is_active: bool) -> User:
+    async def set_active_status(
+        db: AsyncSession, user_id: uuid.UUID, is_active: bool, acting_user_id: Optional[uuid.UUID] = None
+    ) -> User:
         user = await UserService.get_user_by_id(db, user_id)
+        if not is_active:
+            if acting_user_id is not None and acting_user_id == user.id:
+                raise ConflictException("You cannot deactivate your own account")
+            await UserService._ensure_not_last_active_admin(db, user)
         user.is_active = is_active
         await db.commit()
         await db.refresh(user)

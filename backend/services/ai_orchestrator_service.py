@@ -32,13 +32,14 @@ from backend.models.lead_qualification import LeadQualification
 from backend.models.lead_qualification import ConfigurationType, PurchasePurpose
 from backend.models.message import Message, MessageType, SenderType
 from backend.services.conversation_service import ALLOWED_STATE_TRANSITIONS, ConversationService
+from backend.services.handoff_service import build_handoff_summary
 from backend.services.project_service import ProjectService
 from backend.services.qualification_service import QualificationService
 
 _FALLBACK_REPLY = {
-    "EN": "Sorry, I'm having trouble responding right now. A member of our team will follow up with you shortly.",
-    "HI": "Maaf kijiye, abhi jawab dene mein dikkat aa rahi hai. Hamari team aapse jaldi contact karegi.",
-    "GU": "Maaf karjo, atyare javab aapva ma takalif thai rahi chhe. Amari team tamne thodi vaar ma contact karshe.",
+    "EN": "Sorry, I'm having trouble responding right now. Please try again in a moment, or ask to speak with a salesperson.",
+    "HI": "Maaf kijiye, abhi jawab dene mein dikkat aa rahi hai. Kripya thodi der baad phir koshish karein, ya kisi salesperson se baat karne ko kahein.",
+    "GU": "Maaf karjo, atyare javab aapva ma takalif thai rahi chhe. Kripa kari thodi vaar pachhi fari prayatna karo, athva salesperson sathe vaat karva kaho.",
 }
 
 _SENDER_ROLE_MAP = {
@@ -55,6 +56,19 @@ class OrchestratorResult:
     skipped_reason: Optional[str] = None
 
 
+def _resolve_reply_language(message_text: str, detected: Optional[str], current: str) -> str:
+    """
+    Script is a deterministic signal: Gujarati / Devanagari characters decide
+    the language outright. Otherwise trust the extractor's reading of the
+    *current* message (romanized Hindi/Gujarati has no script to inspect).
+    """
+    if any("઀" <= ch <= "૿" for ch in message_text):
+        return "GU"
+    if any("ऀ" <= ch <= "ॿ" for ch in message_text):
+        return "HI"
+    return detected or current
+
+
 def _parse_date(value: Optional[str]) -> Optional[date]:
     if not value:
         return None
@@ -68,54 +82,22 @@ def _determine_handoff_reason(
     extraction: ExtractionResult, guardrail_flags: GuardrailFlags, retrieved_chunks: List
 ) -> Optional[HandoffReason]:
     """
-    Escalation triggers per CLAUDE.md section 6: an explicit buyer request
-    always wins, then a complaint/sensitive query, then an unsupported
-    pricing/discount/commitment ask (the reply guardrail already blocked
-    it), then low-confidence (asked about a specific project and nothing
-    relevant was retrieved to ground an answer).
+    Escalation triggers per CLAUDE.md section 6 / Feature 06 section 4: an
+    explicit buyer request always wins, then a complaint/sensitive query,
+    then a pricing/discount ask (the AI may never quote prices, so a
+    salesperson must confirm them -- whether or not the reply guardrail had
+    to block a generated figure), then low-confidence (asked about a
+    specific project and nothing relevant was retrieved to ground an answer).
     """
     if guardrail_flags.handoff_requested:
         return HandoffReason.BUYER_REQUEST
     if guardrail_flags.complaint_detected:
         return HandoffReason.COMPLAINT
-    if guardrail_flags.reply_price_violation_blocked:
+    if guardrail_flags.reply_price_violation_blocked or extraction.intent == "PRICING_OR_DISCOUNT_REQUEST":
         return HandoffReason.UNSUPPORTED_QUERY
     if extraction.intent == "PROJECT_QUESTION" and extraction.mentioned_project_name and not retrieved_chunks:
         return HandoffReason.LOW_CONFIDENCE
     return None
-
-
-def _build_handoff_summary(
-    lead: Lead,
-    qualification: Optional[LeadQualification],
-    buyer_message_text: str,
-    reason: HandoffReason,
-) -> str:
-    """
-    A concise, structured handoff summary built only from data already
-    captured for this buyer -- never invents amenities, prices or
-    commitments. Surfaced to the sales executive via HandoffDetail.
-    """
-    parts = [f"Escalation reason: {reason.value.replace('_', ' ').title()}."]
-    contact = lead.normalized_phone or lead.normalized_email or "no contact on file"
-    parts.append(f"Buyer: {lead.full_name} ({contact}).")
-
-    if qualification is not None:
-        details = []
-        if qualification.configuration:
-            details.append(f"configuration {qualification.configuration.value.replace('_', ' ')}")
-        if qualification.budget_min or qualification.budget_max:
-            details.append("budget captured")
-        if qualification.purchase_purpose:
-            details.append(f"purpose {qualification.purchase_purpose.value.replace('_', ' ').lower()}")
-        if qualification.preferred_visit_date:
-            details.append(f"wants to visit around {qualification.preferred_visit_date.isoformat()}")
-        if details:
-            parts.append("Qualification: " + ", ".join(details) + ".")
-
-    trimmed = buyer_message_text.strip().replace("\n", " ")[:280]
-    parts.append(f'Latest message: "{trimmed}"')
-    return " ".join(parts)
 
 
 class AIOrchestratorService:
@@ -260,7 +242,13 @@ class AIOrchestratorService:
         knowledge_context = format_knowledge_context(
             project_info=project_info, chunks=[c.content for c in retrieved_chunks]
         )
-        reply_language = extraction.detected_language or conversation.language.value
+        reply_language = _resolve_reply_language(
+            buyer_message_text, extraction.detected_language, conversation.language.value
+        )
+        if reply_language != conversation.language.value:
+            # Persist the buyer's current language so it is not stuck on the
+            # value chosen when the conversation started.
+            conversation.language = type(conversation.language)(reply_language)
         response_system_prompt = build_response_system_prompt(
             language=reply_language, knowledge_context=knowledge_context
         )
@@ -279,7 +267,7 @@ class AIOrchestratorService:
 
         handoff_reason = _determine_handoff_reason(extraction, guardrail_flags, retrieved_chunks)
         if handoff_reason is not None:
-            summary = _build_handoff_summary(lead, qualification, buyer_message_text, handoff_reason)
+            summary = build_handoff_summary(lead, qualification, buyer_message_text, handoff_reason)
             await tools.request_human_handoff(conversation, lead, reason=handoff_reason, summary=summary)
             final_reply_text = (
                 final_reply_text

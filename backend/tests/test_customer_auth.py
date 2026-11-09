@@ -141,7 +141,8 @@ async def test_register_duplicate_normalized_email_rejected(client, fake_email, 
             "accepted_privacy_policy": True,
         },
     )
-    assert resp2.status_code == 409
+    # Same response as a fresh signup: no account-existence oracle.
+    assert resp2.status_code == 201
 
 
 @pytest.mark.asyncio

@@ -343,6 +343,8 @@ async def test_sales_executive_only_sees_and_manages_assigned_leads(client, seed
     listed = await client.get("/api/v1/leads", headers=exec_headers, params={"search": "Scope", "assigned_executive_id": admin_id})
     assert listed.status_code == 200
     assert [i["id"] for i in listed.json()["items"]] == [assigned]
+    # the "new" counter shares the executive's scope (E2E round 4: it counted every NEW lead)
+    assert listed.json()["new_count"] == 1
     assert len((await client.get("/api/v1/leads", headers=manager, params={"search": "Scope"})).json()["items"]) == 2
 
     # detail / sources / update of a lead not assigned to the executive

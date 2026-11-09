@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { apiClient, HealthResponse } from "@/lib/api-client";
+import { apiClient, HealthResponse, OverviewAnalytics } from "@/lib/api-client";
 import {
   Users,
   CalendarCheck,
@@ -19,6 +19,7 @@ import {
 export function DashboardPlaceholder() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [overview, setOverview] = useState<OverviewAnalytics | null>(null);
 
   useEffect(() => {
     apiClient
@@ -26,7 +27,14 @@ export function DashboardPlaceholder() {
       .then((data) => setHealth(data))
       .catch(() => setHealth(null))
       .finally(() => setLoading(false));
+    apiClient
+      .getOverviewAnalytics({ range: "LAST_30_DAYS" })
+      .then((data) => setOverview(data))
+      .catch(() => setOverview(null));
   }, []);
+
+  const redisHealthy = health?.redis?.status === "healthy" || health?.redis?.status === "connected";
+  const formatPercent = (v: number | null | undefined) => (v === null || v === undefined ? "--" : `${v}%`);
 
   return (
     <div className="space-y-6">
@@ -41,9 +49,6 @@ export function DashboardPlaceholder() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs px-3 py-1.5 rounded-lg bg-[#F0F1EC] text-[#202B28] font-medium border border-[#E5E5DE]">
-            Phase: <strong className="text-[#173B35]">Auth & RBAC (Feature 01)</strong>
-          </span>
           <span className="text-xs px-3 py-1.5 rounded-lg bg-[#173B35] text-white font-medium shadow-xs">
             FastAPI + Next.js
           </span>
@@ -63,10 +68,10 @@ export function DashboardPlaceholder() {
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-bold font-heading text-[#202B28]">0</span>
+            <span className="text-3xl font-bold font-heading text-[#202B28]">{overview ? overview.total_unique_leads : "--"}</span>
             <div className="flex items-center gap-1.5 text-xs text-[#27845B] mt-1 font-medium">
               <ArrowUpRight className="w-3.5 h-3.5" />
-              <span>Awaiting lead ingestion</span>
+              <span>Unique leads, last 30 days</span>
             </div>
           </div>
         </div>
@@ -75,16 +80,16 @@ export function DashboardPlaceholder() {
         <div className="bg-white p-5 rounded-xl border border-[#E5E5DE] shadow-xs hover:border-[#C5C5BB] transition-colors">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-[#737C76] uppercase tracking-wider">
-              AI Qualified
+              Qualification Rate
             </span>
             <div className="w-8 h-8 rounded-lg bg-[#E9F5EF] flex items-center justify-center text-[#27845B]">
               <Sparkles className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-bold font-heading text-[#202B28]">0</span>
+            <span className="text-3xl font-bold font-heading text-[#202B28]">{formatPercent(overview?.qualification_rate_percent)}</span>
             <div className="flex items-center gap-1.5 text-xs text-[#737C76] mt-1 font-medium">
-              <span>Feature 04 scheduled</span>
+              <span>Of unique leads, last 30 days</span>
             </div>
           </div>
         </div>
@@ -100,9 +105,9 @@ export function DashboardPlaceholder() {
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-bold font-heading text-[#202B28]">0</span>
+            <span className="text-3xl font-bold font-heading text-[#202B28]">{overview ? overview.site_visits_booked : "--"}</span>
             <div className="flex items-center gap-1.5 text-xs text-[#737C76] mt-1 font-medium">
-              <span>Feature 05 scheduled</span>
+              <span>Booked in the last 30 days</span>
             </div>
           </div>
         </div>
@@ -118,9 +123,9 @@ export function DashboardPlaceholder() {
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-bold font-heading text-[#202B28]">--</span>
+            <span className="text-3xl font-bold font-heading text-[#202B28]">{formatPercent(overview?.attendance_rate_percent)}</span>
             <div className="flex items-center gap-1.5 text-xs text-[#737C76] mt-1 font-medium">
-              <span>Feature 07 scheduled</span>
+              <span>Of past visits, last 30 days</span>
             </div>
           </div>
         </div>
@@ -210,12 +215,12 @@ export function DashboardPlaceholder() {
                     Redis Integration Module
                   </h3>
                   <p className="text-xs text-[#737C76] mt-0.5">
-                    Environment URL configured &bull; Graceful non-blocking fallback
+                    Rate limiting &amp; AI processing lock &bull; Fails open when unavailable
                   </p>
                 </div>
               </div>
               <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-[#F0F1EC] text-[#737C76] border border-[#E5E5DE]">
-                Configured (Ready)
+                {loading ? "Checking..." : redisHealthy ? "Connected" : "Unavailable"}
               </span>
             </div>
           </div>
@@ -269,7 +274,7 @@ export function DashboardPlaceholder() {
 
           <div className="mt-6 pt-4 border-t border-[#E5E5DE] flex items-center justify-between text-xs text-[#737C76]">
             <span>EstateFlow AI v1.0.0</span>
-            <span className="font-medium text-[#173B35]">Ready for Feature 02</span>
+            <span className="font-medium text-[#173B35]">Production workflow active</span>
           </div>
         </div>
       </div>
