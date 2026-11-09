@@ -158,6 +158,9 @@ export interface CustomerSiteVisit {
   id: string;
   project_id: string;
   project_name: string;
+  project_location: string | null;
+  project_rera_number: string | null;
+  map_url: string | null;
   scheduled_start: string;
   scheduled_end: string;
   display_timezone: string;

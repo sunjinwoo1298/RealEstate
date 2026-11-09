@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
 from backend.core.logging import logger
-from backend.models.lead import Lead
+from backend.models.lead import ConsentStatus, Lead, LeadStatus
 from backend.models.project import Project
 from backend.models.site_visit import SiteVisit, SiteVisitStatus
 from backend.models.visit_reminder import ReminderStatus, VisitReminder
@@ -102,6 +102,15 @@ class ReminderWorkerService:
         project = project_result.scalar_one_or_none()
         if lead is None or project is None:
             reminder.status = ReminderStatus.SKIPPED
+            await db.commit()
+            return
+
+        # DPDP: consent and opt-outs are re-checked at send time, not just at
+        # booking time. A buyer who has opted out (or declined consent) since
+        # booking gets no reminder; the visit itself is untouched.
+        if lead.lead_status == LeadStatus.OPTED_OUT or lead.consent_status == ConsentStatus.DECLINED:
+            reminder.status = ReminderStatus.SKIPPED
+            reminder.failure_reason = "lead_opted_out"
             await db.commit()
             return
 

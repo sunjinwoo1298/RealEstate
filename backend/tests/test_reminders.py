@@ -14,7 +14,7 @@ from backend.core.database import get_session_factory
 from backend.core.security import hash_password
 from backend.models.availability_rule import AvailabilityRule
 from backend.models.blocked_period import BlockedPeriod
-from backend.models.lead import Lead, LeadStatus
+from backend.models.lead import ConsentStatus, Lead, LeadStatus
 from backend.models.lead_source import LeadSource
 from backend.models.project import Project
 from backend.models.project_visit_capacity import ProjectVisitCapacity
@@ -423,6 +423,42 @@ async def test_stale_booking_version_is_skipped(db_session, seeded_users, projec
 
     await db_session.refresh(h2)
     assert h2.status == ReminderStatus.SKIPPED
+
+
+class _MustNotSendProvider:
+    async def send(self, *args, **kwargs):
+        raise AssertionError("no reminder may be delivered to an opted-out lead")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("opt_out", ["status", "consent"])
+async def test_opted_out_lead_is_never_reminded(db_session, seeded_users, project_with_capacity, test_lead, opt_out):
+    # DPDP / brief: honour opt-outs. The opt-out happens AFTER booking, so the
+    # check must run when the reminder is processed, not only when booking.
+    project, _ = project_with_capacity
+    start_time = datetime.now(timezone.utc) + timedelta(days=3)
+    await _add_full_day_rule(
+        db_session, executive_id=seeded_users["exec1"].id, project_id=project.id, day_of_week=start_time.astimezone(IST).weekday()
+    )
+    visit = await _book(db_session, lead=test_lead, project=project, start_time=start_time)
+    reminders = await _reminders_for(db_session, visit.id)
+    h2 = next(r for r in reminders if r.reminder_type == ReminderType.H2)
+
+    values = {"lead_status": LeadStatus.OPTED_OUT} if opt_out == "status" else {"consent_status": ConsentStatus.DECLINED}
+    await db_session.execute(update(Lead).where(Lead.id == test_lead.id).values(**values))
+    await db_session.execute(
+        update(VisitReminder).where(VisitReminder.id == h2.id).values(scheduled_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    )
+    await db_session.commit()
+
+    await ReminderWorkerService.claim_due_reminders(db_session)
+    await ReminderWorkerService.process_reminder(db_session, h2.id, _MustNotSendProvider())
+
+    await db_session.refresh(h2)
+    assert h2.status == ReminderStatus.SKIPPED
+    assert h2.failure_reason == "lead_opted_out"
+    await db_session.refresh(visit)
+    assert visit.status == SiteVisitStatus.CONFIRMED  # the booking itself is untouched
 
 
 @pytest.mark.asyncio

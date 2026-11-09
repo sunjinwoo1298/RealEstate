@@ -8,7 +8,8 @@ import {
   Layers,
   CheckCircle2,
   FileText,
-  Clock,
+  MessageSquare,
+  CalendarCheck,
   ArrowRight,
   ArrowLeft,
   AlertCircle,
@@ -208,24 +209,20 @@ export default function PublicProjectDetailPage() {
             </span>
 
             <div className="mt-5 space-y-3">
-              <button
-                type="button"
-                disabled
-                title="Available once customer accounts are launched"
-                className="w-full h-11 rounded-lg bg-[#F0F1EC] text-[#9FAAA4] text-sm font-semibold cursor-not-allowed flex items-center justify-center gap-2"
+              <Link
+                href="/customer/chat/new"
+                className="w-full h-11 rounded-lg bg-[#173B35] hover:bg-[#315C50] text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
               >
-                <Clock className="w-4 h-4" />
-                Ask the AI Assistant (Coming soon)
-              </button>
-              <button
-                type="button"
-                disabled
-                title="Available once customer accounts are launched"
-                className="w-full h-11 rounded-lg bg-[#F0F1EC] text-[#9FAAA4] text-sm font-semibold cursor-not-allowed flex items-center justify-center gap-2"
+                <MessageSquare className="w-4 h-4" />
+                Ask our assistant
+              </Link>
+              <Link
+                href="/customer/visits/book"
+                className="w-full h-11 rounded-lg bg-[#C47A55] hover:bg-[#B26B48] text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
               >
-                <Clock className="w-4 h-4" />
-                Book a Site Visit (Coming soon)
-              </button>
+                <CalendarCheck className="w-4 h-4" />
+                Book a site visit
+              </Link>
               <Link
                 href="/#contact"
                 className="w-full h-11 rounded-lg border border-[#E5E5DE] hover:bg-[#F0F1EC] text-sm font-semibold text-[#202B28] flex items-center justify-center transition-colors"

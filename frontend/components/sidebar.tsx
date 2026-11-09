@@ -13,7 +13,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Building2,
-  ShieldCheck,
   UserCog,
   Headset,
 } from "lucide-react";
@@ -69,7 +68,7 @@ export function Sidebar() {
                 EstateFlow <span className="text-[#C47A55]">AI</span>
               </span>
               <span className="text-[11px] text-[#A3B8B0] truncate tracking-wider uppercase font-medium">
-                Developer Suite
+                Sales workspace
               </span>
             </div>
           )}
@@ -119,23 +118,6 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Footer Info */}
-      <div className="p-3 border-t border-[#1b3d37]">
-        <div
-          className={cn(
-            "rounded-lg bg-[#102522] p-2.5 flex items-center gap-2.5",
-            collapsed && "justify-center"
-          )}
-        >
-          <ShieldCheck className="w-4 h-4 text-[#27845B] shrink-0" />
-          {!collapsed && (
-            <div className="text-[11px] text-[#9EBAAF] leading-tight truncate">
-              <p className="font-semibold text-white">Foundation Ready</p>
-              <p className="truncate">Prisma Postgres</p>
-            </div>
-          )}
-        </div>
-      </div>
     </aside>
   );
 }

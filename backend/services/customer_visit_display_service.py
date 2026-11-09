@@ -4,6 +4,7 @@ from typing import Dict, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.location import map_url_for
 from backend.models.project import Project
 from backend.models.site_visit import SiteVisit
 from backend.models.user import User
@@ -89,6 +90,9 @@ class CustomerVisitDisplayService:
                     id=visit.id,
                     project_id=visit.project_id,
                     project_name=project.name if project else "",
+                    project_location=project.location if project else None,
+                    project_rera_number=project.rera_number if project else None,
+                    map_url=map_url_for(project.name, project.location) if project else None,
                     scheduled_start=visit.start_time,
                     scheduled_end=visit.end_time,
                     status=visit.status,

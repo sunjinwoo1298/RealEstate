@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { AlertCircle, ArrowLeft, Headset, Loader2, MessageSquare, Send } from "lucide-react";
 import { useCustomerAuth } from "@/lib/customer-auth-context";
+import { MessageText } from "@/components/chat/message-text";
 import {
   customerApiClient,
   CustomerApiError,
@@ -227,7 +228,9 @@ export default function CustomerConversationPage() {
                   {isStaff && (
                     <p className="text-[10px] font-semibold uppercase tracking-wide mb-1 opacity-80">Our team</p>
                   )}
-                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  <p className="whitespace-pre-wrap break-words">
+                    <MessageText text={message.content} />
+                  </p>
                   <p className={`text-[10px] mt-1 ${isBuyer || isStaff ? "text-white/70" : "text-[#9EA69F]"}`}>
                     {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </p>

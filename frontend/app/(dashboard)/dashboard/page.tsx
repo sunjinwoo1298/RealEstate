@@ -1,5 +1,5 @@
-import { DashboardPlaceholder } from "@/components/dashboard-placeholder";
+import { DashboardOverview } from "@/components/dashboard-overview";
 
-export default function HomePage() {
-  return <DashboardPlaceholder />;
+export default function DashboardPage() {
+  return <DashboardOverview />;
 }

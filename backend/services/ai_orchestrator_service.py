@@ -2,7 +2,8 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import List, Optional
 
 from redis.exceptions import RedisError
@@ -18,7 +19,13 @@ from backend.ai.guardrails import (
     detect_prompt_injection,
     enforce_reply_guardrails,
 )
-from backend.ai.prompts import build_history_messages, build_response_system_prompt, format_knowledge_context, EXTRACTION_SYSTEM_PROMPT
+from backend.ai.prompts import (
+    build_extraction_system_prompt,
+    build_history_messages,
+    build_response_system_prompt,
+    format_knowledge_context,
+)
+from backend.ai.visit_slots import build_visit_slots_reply, missing_qualification_details
 from backend.ai.schemas import ExtractionResult, OrchestratorReply
 from backend.ai.tools import AITools, ToolCallLog
 from backend.core.config import settings
@@ -76,6 +83,9 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def _determine_handoff_reason(
@@ -189,7 +199,7 @@ class AIOrchestratorService:
         # transaction in an unrecoverable PendingRollbackError state.
         extraction_completion = await asyncio.wait_for(
             GroqClient.generate_structured(
-                system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                system_prompt=build_extraction_system_prompt(datetime.now(_IST).date().isoformat()),
                 messages=build_history_messages(history, latest_message=buyer_message_text),
                 schema=ExtractionResult,
             ),
@@ -250,7 +260,13 @@ class AIOrchestratorService:
             # value chosen when the conversation started.
             conversation.language = type(conversation.language)(reply_language)
         response_system_prompt = build_response_system_prompt(
-            language=reply_language, knowledge_context=knowledge_context
+            language=reply_language,
+            knowledge_context=knowledge_context,
+            missing_details=(
+                missing_qualification_details(qualification)
+                if extraction.intent not in ("PRICING_OR_DISCOUNT_REQUEST", "HUMAN_HANDOFF_REQUEST")
+                else None
+            ),
         )
 
         reply_completion = await asyncio.wait_for(
@@ -264,6 +280,27 @@ class AIOrchestratorService:
         )
         reply: OrchestratorReply = reply_completion.data
         final_reply_text = enforce_reply_guardrails(reply.reply_text, language=reply_language, flags=guardrail_flags)
+
+        # Site-visit requests are answered from the REAL availability calendar,
+        # never from the LLM: it must not promise a time that was not checked.
+        if (extraction.wants_site_visit or extraction.intent == "SITE_VISIT_REQUEST") and resolved_project_id is not None:
+            target_date = _parse_date(extraction.preferred_visit_date) or (datetime.now(_IST).date() + timedelta(days=1))
+            if target_date < datetime.now(_IST).date():
+                target_date = datetime.now(_IST).date() + timedelta(days=1)
+            try:
+                slots = await tools.get_available_slots(resolved_project_id, target_date)
+            except Exception as exc:  # noqa: BLE001 - scheduling not configured etc.: fall back to the LLM text + guardrail rule 8
+                logger.warning(f"Could not load visit slots for AI reply: {exc}")
+                slots = None
+            if slots is not None:
+                final_reply_text = build_visit_slots_reply(
+                    language=reply_language,
+                    project_name=(project_info or {}).get("name") or "the project",
+                    project_id=resolved_project_id,
+                    target_date=target_date,
+                    slots=slots,
+                    portal_base_url=settings.customer_portal_base_url,
+                )
 
         handoff_reason = _determine_handoff_reason(extraction, guardrail_flags, retrieved_chunks)
         if handoff_reason is not None:

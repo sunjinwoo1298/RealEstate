@@ -56,7 +56,7 @@ export default function LoginPage() {
             EstateFlow <span className="text-[#C47A55]">AI</span>
           </h1>
           <p className="text-xs text-[#737C76] mt-1 tracking-wide uppercase font-medium">
-            Developer Suite
+            Sales workspace
           </p>
         </div>
 

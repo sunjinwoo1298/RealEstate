@@ -72,7 +72,9 @@ export default function BookSiteVisitPage() {
 
   useEffect(() => {
     if (!isLoading && !customer) {
-      router.replace("/customer/login?returnTo=/customer/visits/book");
+      // Keep any ?project=&date= pre-fill (e.g. from the assistant's link) across sign-in.
+      const here = `/customer/visits/book${window.location.search}`;
+      router.replace(`/customer/login?returnTo=${encodeURIComponent(here)}`);
     }
   }, [isLoading, customer, router]);
 
@@ -91,6 +93,23 @@ export default function BookSiteVisitPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional data fetch on customer load
     if (customer && step === "project") loadProjects(search);
   }, [customer, step, search, loadProjects]);
+
+  // Pre-fill from a link such as /customer/visits/book?project=<id>&date=YYYY-MM-DD
+  // (shared by the chat assistant with the real free times), once, on first load.
+  const prefillAppliedRef = useRef(false);
+  useEffect(() => {
+    if (prefillAppliedRef.current || !projects) return;
+    prefillAppliedRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get("project");
+    const match = projectId ? projects.find((p) => p.id === projectId) : undefined;
+    if (!match) return;
+    const dateParam = params.get("date");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-off pre-fill from the URL
+    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) && dateParam >= todayIsoDate()) setDate(dateParam);
+    setSelectedProject(match);
+    setStep("slot");
+  }, [projects]);
 
   const loadSlots = useCallback(async () => {
     if (!selectedProject) return;
@@ -352,6 +371,30 @@ export default function BookSiteVisitPage() {
               <dt className="text-[#737C76]">Date &amp; time</dt>
               <dd className="font-semibold text-[#202B28]">{formatDateTime(booking.scheduled_start)} (IST)</dd>
             </div>
+            {booking.project_location && (
+              <div className="flex justify-between gap-4">
+                <dt className="text-[#737C76]">Location</dt>
+                <dd className="font-semibold text-[#202B28] text-right">
+                  {booking.project_location}
+                  {booking.map_url && (
+                    <a
+                      href={booking.map_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-[#173B35] underline underline-offset-2 font-medium"
+                    >
+                      Open in maps
+                    </a>
+                  )}
+                </dd>
+              </div>
+            )}
+            {booking.project_rera_number && (
+              <div className="flex justify-between gap-4">
+                <dt className="text-[#737C76]">RERA registration</dt>
+                <dd className="font-semibold text-[#202B28] text-right">{booking.project_rera_number}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-[#737C76]">Booking reference</dt>
               <dd className="font-semibold text-[#202B28]">{booking.booking_reference}</dd>

@@ -11,6 +11,7 @@ import {
   CalendarDays,
   Clock,
   Loader2,
+  MapPin,
   User,
 } from "lucide-react";
 import { useCustomerAuth } from "@/lib/customer-auth-context";
@@ -224,6 +225,26 @@ export default function CustomerVisitDetailPage() {
                 </dt>
                 <dd className="font-semibold text-[#202B28] mt-0.5">{visit.display_timezone}</dd>
               </div>
+              {visit.project_location && (
+                <div className="sm:col-span-2">
+                  <dt className="text-[#737C76] flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5" /> Location
+                  </dt>
+                  <dd className="font-semibold text-[#202B28] mt-0.5">
+                    {visit.project_location}
+                    {visit.map_url && (
+                      <a
+                        href={visit.map_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 text-[#173B35] underline underline-offset-2 hover:text-[#315C50] font-medium"
+                      >
+                        Open in maps
+                      </a>
+                    )}
+                  </dd>
+                </div>
+              )}
               {visit.executive_full_name && (
                 <div>
                   <dt className="text-[#737C76] flex items-center gap-1.5">

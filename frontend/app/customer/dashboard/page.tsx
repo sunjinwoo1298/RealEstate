@@ -165,7 +165,7 @@ export default function CustomerDashboardPage() {
               </div>
               <div>
                 <dt className="text-[#737C76]">Project</dt>
-                <dd className="font-semibold text-[#202B28]">{enquiry.project_name || "Unavailable"}</dd>
+                <dd className="font-semibold text-[#202B28]">{enquiry.project_name || "Not chosen yet"}</dd>
               </div>
               <div>
                 <dt className="text-[#737C76]">Configuration</dt>

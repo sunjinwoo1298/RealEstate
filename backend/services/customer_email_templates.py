@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from backend.core.config import settings
+from backend.core.location import map_url_for
 from backend.models.customer_notification_delivery import CustomerNotificationEvent
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -83,6 +84,8 @@ def render_email(template_key: str, payload: Dict[str, Any]) -> RenderedEmail:
     project = _clean(payload.get("project_name")) or "your project"
     first_name = _clean(payload.get("first_name"))
     location = _clean(payload.get("project_location"))
+    rera = _clean(payload.get("project_rera_number"))
+    map_link = map_url_for(project, location) if location else None
     executive = _clean(payload.get("executive_name"))
     start = payload.get("start_time")
     previous = payload.get("previous_start_time")
@@ -100,11 +103,15 @@ def render_email(template_key: str, payload: Dict[str, Any]) -> RenderedEmail:
         details.append(("Previously scheduled", format_ist(previous)))
     if location:
         details.append(("Location", location))
+    if rera:
+        details.append(("RERA registration", rera))
     if executive and template_key != "site_visit_cancelled":
         details.append(("Your contact at the site", executive))
 
     text_lines = [greeting, "", lead, ""]
     text_lines += [f"{k}: {v}" for k, v in details]
+    if map_link and template_key != "site_visit_cancelled":
+        text_lines += ["", f"Open in maps: {map_link}"]
     if link and template_key != "site_visit_cancelled":
         text_lines += ["", f"View your visit: {link}"]
     elif template_key == "site_visit_cancelled" and link:
@@ -118,6 +125,12 @@ def render_email(template_key: str, payload: Dict[str, Any]) -> RenderedEmail:
         f'<tr><td style="padding:4px 12px 4px 0;color:#737C76;font-size:14px">{escape(k)}</td>'
         f'<td style="padding:4px 0;color:#202B28;font-size:14px;font-weight:600">{escape(v)}</td></tr>'
         for k, v in details
+    )
+    map_html = (
+        f'<p style="margin:16px 0 0"><a href="{escape(map_link, quote=True)}" '
+        f'style="color:{_BRAND};font-size:14px;font-weight:600">Open the location in maps</a></p>'
+        if map_link and template_key != "site_visit_cancelled"
+        else ""
     )
     button = (
         f'<p style="margin:24px 0"><a href="{escape(link, quote=True)}" '
@@ -144,7 +157,7 @@ def render_email(template_key: str, payload: Dict[str, Any]) -> RenderedEmail:
         f'<p style="margin:0 0 8px;font-size:14px;color:#202B28">{escape(greeting)}</p>'
         f'<p style="margin:0 0 16px;font-size:14px;color:#202B28">{escape(lead)}</p>'
         f'<table role="presentation" cellpadding="0" cellspacing="0">{rows}</table>'
-        f"{button}{support_html}"
+        f"{map_html}{button}{support_html}"
         '<p style="margin:16px 0 0;font-size:12px;color:#9EA69F">You are receiving this service message '
         "because you booked a site visit with EstateFlow.</p>"
         "</td></tr></table></td></tr></table></body></html>"

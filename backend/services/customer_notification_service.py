@@ -148,6 +148,7 @@ class CustomerNotificationService:
             "first_name": full_name.split()[0] if full_name else None,
             "project_name": project.name if project else None,
             "project_location": project.location if project else None,
+            "project_rera_number": project.rera_number if project else None,
             "start_time": visit.start_time.isoformat(),
             "visit_id": str(visit.id),
         }

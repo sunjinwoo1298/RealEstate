@@ -262,6 +262,44 @@ async def test_project_question_mentioning_offer_does_not_hand_off(client, db_se
 
 
 @pytest.mark.asyncio
+async def test_visit_request_gets_real_slots_not_an_llm_promise(client, db_session, monkeypatch):
+    # Regression (E2E round 5): the assistant answered "Sure, you can visit tomorrow at 11 AM"
+    # without checking the calendar or booking anything. Visit requests must be answered
+    # from the real availability and hand the buyer to the safe booking flow.
+    import datetime as dt
+    from types import SimpleNamespace
+
+    project = await _create_project(db_session, "visitreq")
+    create_resp = await _create_chat_session(client)
+    conversation_id = create_resp.json()["id"]
+    client.cookies.set("estateflow_buyer_session", create_resp.cookies.get("estateflow_buyer_session"))
+
+    async def fake_slots(self, project_id, target_date):
+        assert project_id == project.id and target_date == dt.date(2099, 1, 5)
+        return [SimpleNamespace(start_time=dt.datetime(2099, 1, 5, 5, 30, tzinfo=dt.timezone.utc), end_time=None, available_executive_count=1)]
+
+    monkeypatch.setattr(orchestrator_module.AITools, "get_available_slots", fake_slots)
+    _mock_groq(
+        monkeypatch,
+        extraction=ExtractionResult(
+            detected_language="EN", intent="SITE_VISIT_REQUEST", mentioned_project_name=project.name,
+            wants_site_visit=True, preferred_visit_date="2099-01-05",
+        ),
+        reply=OrchestratorReply(reply_text="Sure, you can visit tomorrow at 11 AM, see you then!", language="EN"),
+    )
+    resp = await client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages", json={"content": "Can I visit on 5 Jan at 11?"}
+    )
+    assert resp.status_code == 201
+
+    messages_resp = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")
+    ai = [m for m in messages_resp.json()["items"] if m["sender_type"] == "AI"][0]["content"]
+    assert "see you then" not in ai and "Sure, you can visit" not in ai
+    assert "11:00 am" in ai  # 05:30 UTC = 11:00 IST, from the (mocked) real availability
+    assert f"/customer/visits/book?project={project.id}&date=2099-01-05" in ai
+
+
+@pytest.mark.asyncio
 async def test_no_ai_response_when_conversation_is_human_owned(client, db_session, monkeypatch):
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]

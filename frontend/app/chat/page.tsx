@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { MessageText } from "@/components/chat/message-text";
 import { Building2, Loader2, AlertCircle, Headset, Send, WifiOff, MessageSquare } from "lucide-react";
 import {
   apiClient,
@@ -365,7 +366,9 @@ export default function BuyerChatPage() {
                   {isStaff && (
                     <p className="text-[10px] font-semibold uppercase tracking-wide mb-1 opacity-80">Our team</p>
                   )}
-                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  <p className="whitespace-pre-wrap break-words">
+                    <MessageText text={message.content} />
+                  </p>
                   <p className={`text-[10px] mt-1 ${isBuyer || isStaff ? "text-white/70" : "text-[#9EA69F]"}`}>
                     {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </p>

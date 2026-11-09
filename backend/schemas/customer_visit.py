@@ -70,6 +70,9 @@ class CustomerSiteVisitPublic(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     project_name: str
+    project_location: Optional[str] = None
+    project_rera_number: Optional[str] = None
+    map_url: Optional[str] = None
     scheduled_start: datetime
     scheduled_end: datetime
     display_timezone: str = DISPLAY_TIMEZONE

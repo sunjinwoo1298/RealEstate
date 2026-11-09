@@ -19,6 +19,7 @@ class ExtractionResult(BaseModel):
         "QUALIFICATION_INFO",
         "PRICING_OR_DISCOUNT_REQUEST",
         "HUMAN_HANDOFF_REQUEST",
+        "SITE_VISIT_REQUEST",
         "OTHER",
     ] = "OTHER"
     mentioned_project_name: Optional[str] = Field(
@@ -30,6 +31,7 @@ class ExtractionResult(BaseModel):
     purchase_purpose: Optional[Literal["SELF_USE", "INVESTMENT"]] = None
     preferred_visit_date: Optional[str] = Field(default=None, description="ISO 8601 date (YYYY-MM-DD) if mentioned")
     wants_human_handoff: bool = False
+    wants_site_visit: bool = False
 
 
 class OrchestratorReply(BaseModel):
