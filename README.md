@@ -4,12 +4,12 @@ AI-assisted lead management and site-visit automation for residential property d
 
 **Docs:** [Technical design](docs/EstateFlow_Technical_Design_Document.docx) · [Deployment & demo logins](deployment.md)
 
-## Live demo (for reviewers)
+## Demo Steps  
 
 | | URL |
 |---|---|
 | Web app (Vercel) | <https://real-estate-phi-lemon.vercel.app> |
-| API (Render) | <https://realestate-hlyl.onrender.com> (health check: `/health`) |
+| API (Render) | <https://realestate-hlyl.onrender.com> |
 
 No real messages or emails are sent: email is set to `log` and WhatsApp/SMS is simulated. If the first request is slow, the API is waking up; wait a few seconds and retry.
 
@@ -22,9 +22,9 @@ There are two separate sign-in pages. Use a private window (or a different brows
 | **Admin** | [/login](https://real-estate-phi-lemon.vercel.app/login) | `admin-smoke@estateflow.ai` | `Hello@1234` |
 | **Sales head (manager)** | [/login](https://real-estate-phi-lemon.vercel.app/login) | `test2@estateflow.ai` | `09876543` |
 | **Sales executive** | [/login](https://real-estate-phi-lemon.vercel.app/login) | `test@estateflow.ai` | `12345678` |
-| **Buyer (customer)** | [/customer/login](https://real-estate-phi-lemon.vercel.app/customer/login) | `<BUYER EMAIL>` | `<BUYER PASSWORD>` |
 
-> These are demo-only accounts created for review. Please do not change their passwords.
+
+> These are demo-only accounts created for review.
 
 ### What each role can do
 
@@ -53,14 +53,20 @@ Follow the roles in this order; each step uses what the previous one created.
    - Say "I want to visit this Saturday". It lists real free times. Choose one, then reply "yes" to book. It confirms only after the booking is saved.
    - Open **Visits** to see the booking (location, map link, RERA number). You can reschedule or cancel from there.
    - Type `STOP` to test the opt-out: no further reminders or messages are sent.
+
+
 2. **Sales executive** – sign in at `/login`.
    - **Handoff Queue**: open the chat from step 1 and see the summary, source, qualification and full transcript. Reply to the buyer (the AI stays silent once a person takes over).
    - **Site Visits**: find the visit booked above and mark it attended or no-show.
+
+
 3. **Sales head** – sign in at `/login`.
    - **Dashboard**: first response time, answered within 2 minutes, not reached in 48 hours, visits booked, show-up rate.
    - **Conversations → Flagged for review**: chats the AI escalated (price asks, complaints, unanswered questions). Pick a date to review.
    - **Leads**: source tags and duplicate review (fuzzy matches are flagged, never merged automatically).
    - **Availability**: the working hours and capacity that decide which slots buyers see.
+
+
 4. **Admin** – sign in at `/login`.
    - **Knowledge Base**: create a project, upload a fact sheet, approve and publish it. The chat answers only from approved, published fact sheets.
    - **Staff Accounts**: create or disable staff and check that an executive cannot open admin pages.
@@ -141,6 +147,3 @@ pytest backend/tests          # run against a separate test database, never prod
 
 Real WhatsApp/SMS, payments and voice calling are out of scope (messages are simulated and logged; email defaults to `log`). Next: cost per visit by source, a WhatsApp channel with opt-in templates, and a "reviewed" state for flagged chats.
 
-## Compliance
-
-Buyer contact data is personal data under the DPDP Act: contact only with consent, opt-outs (including replying STOP) are honoured, and promotional messages carry the project's RERA registration number.
