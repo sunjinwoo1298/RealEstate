@@ -23,6 +23,7 @@ import signal
 from backend.core.config import settings
 from backend.core.database import close_db_connection, get_session_factory
 from backend.core.logging import logger, setup_logging
+from backend.services.customer_email_provider import get_customer_email_provider
 from backend.services.reminder_delivery import LoggingReminderDeliveryProvider
 from backend.services.reminder_worker_service import ReminderWorkerService
 
@@ -37,12 +38,16 @@ def _request_shutdown(*_args) -> None:
 async def _run_forever() -> None:
     session_factory = get_session_factory()
     provider = LoggingReminderDeliveryProvider()
+    # Validates email configuration up front (fails fast on a bad production config).
+    email_provider = get_customer_email_provider()
     logger.info("Reminder worker started.")
 
     while not _shutdown_requested:
         try:
             async with session_factory() as db:
-                claimed = await ReminderWorkerService.run_due_reminders(db, delivery_provider=provider)
+                claimed = await ReminderWorkerService.run_due_reminders(
+                    db, delivery_provider=provider, email_provider=email_provider
+                )
                 if claimed:
                     logger.info(f"Reminder worker processed {claimed} due reminder(s).")
         except Exception:

@@ -39,3 +39,29 @@ def test_health_endpoint():
     assert data["database"]["database"] == "PostgreSQL (Prisma)"
     assert "redis" in data
 
+
+
+def test_validation_errors_never_echo_submitted_values(monkeypatch):
+    """
+    Regression (E2E BUG-2): the 422 handler logged and returned Pydantic's
+    `input` value -- for a missing field that is the whole request body, so
+    reset tokens and plaintext passwords were written to the server log.
+    """
+    from backend.core import exceptions as exc_module
+
+    logged = []
+    monkeypatch.setattr(exc_module.logger, "warning", lambda msg, *a, **k: logged.append(str(msg)))
+
+    secret_token = "SECRET-RESET-TOKEN-CANARY"
+    secret_password = "Canary!Password123"
+    response = client.post(
+        "/api/v1/customer-auth/reset-password",
+        json={"token": secret_token, "password": secret_password},
+    )
+    assert response.status_code == 422
+    details = response.json()["error"]["details"]
+    assert details and all("input" not in d for d in details)
+    assert {tuple(d["loc"]) for d in details} >= {("body", "new_password")}
+    for text in [response.text, *logged]:
+        assert secret_token not in text
+        assert secret_password not in text

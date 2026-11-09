@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.exceptions import ConflictException, NotFoundException
 from backend.models.site_visit import SiteVisit
 from backend.models.visit_reminder import ReminderStatus, ReminderType, VisitReminder
+from backend.services.customer_notification_service import CustomerNotificationService
 
 REMINDER_OFFSETS: dict = {
     ReminderType.H24: timedelta(hours=24),
@@ -67,8 +68,13 @@ class ReminderService:
                 VisitReminder.status.in_(_PENDING_STATUSES),
             )
         )
+        cancelled_ids = []
         for reminder in result.scalars().all():
             reminder.status = ReminderStatus.CANCELLED
+            cancelled_ids.append(reminder.id)
+        # Feature 14: a customer email not yet sent for a cancelled reminder
+        # must never go out (stale after reschedule/cancel/attendance).
+        await CustomerNotificationService.cancel_deliveries_for_reminders(db, cancelled_ids)
 
     @staticmethod
     async def get_reminder(db: AsyncSession, reminder_id: uuid.UUID) -> VisitReminder:

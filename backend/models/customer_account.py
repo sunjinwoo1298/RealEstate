@@ -56,6 +56,17 @@ class CustomerAccount(Base, TimestampMixin):
     marketing_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     marketing_consent_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Feature 14: customer control over essential visit emails (booking,
+    # reschedule, cancellation, reminders). Distinct from marketing_consent
+    # above -- marketing email does not exist yet and is never inferred from
+    # or substituted for this flag.
+    transactional_email_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    notification_preferences_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     sessions: Mapped[List["CustomerSession"]] = relationship(
         "CustomerSession", back_populates="customer_account", cascade="all, delete-orphan"
     )

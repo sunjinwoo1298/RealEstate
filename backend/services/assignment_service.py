@@ -159,7 +159,12 @@ class AssignmentService:
         assignment.status = AssignmentStatus.ACCEPTED
         assignment.accepted_at = now
         handoff.status = HandoffStatus.ACCEPTED
-        ConversationService.transition_ownership(conversation, OwnershipStatus.HUMAN_ACTIVE)
+        # A manager may reassign a handoff that was already accepted (reassign
+        # only refuses RESOLVED/CANCELLED), in which case the conversation is
+        # still HUMAN_ACTIVE; the new executive's acceptance must not attempt
+        # a HUMAN_ACTIVE -> HUMAN_ACTIVE transition.
+        if conversation.ownership_status != OwnershipStatus.HUMAN_ACTIVE:
+            ConversationService.transition_ownership(conversation, OwnershipStatus.HUMAN_ACTIVE)
 
         await db.commit()
         await db.refresh(handoff)

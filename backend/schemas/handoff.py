@@ -59,6 +59,9 @@ class HandoffQualificationSummary(BaseModel):
 
 
 class HandoffSiteVisitSummary(BaseModel):
+    # Built from SiteVisit ORM rows in the handoff detail endpoint.
+    model_config = {"from_attributes": True}
+
     id: uuid.UUID
     project_id: uuid.UUID
     start_time: datetime

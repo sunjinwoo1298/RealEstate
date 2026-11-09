@@ -289,3 +289,82 @@ async def test_lead_listing_filtering_and_pagination(client, seeded_users):
     data = resp.json()
     assert len(data["items"]) == 2
     assert data["total"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_lead_detail_and_update_include_sources(client, seeded_users):
+    """
+    Regression (E2E BUG-1): GET/PATCH /leads/{id} returned 500 (MissingGreenlet)
+    because the response was validated straight from the ORM Lead, lazily
+    loading Lead.sources outside the async greenlet.
+    """
+    headers = await _login(client, ADMIN_EMAIL)
+    created = await client.post(
+        "/api/v1/leads", headers=headers, json={"full_name": "Detail Buyer", "phone": "9555555551", "email": "Detail@Example.com"}
+    )
+    lead_id = created.json()["lead_id"]
+    await client.post("/api/v1/leads", headers=headers, json={"full_name": "Detail Buyer", "phone": "+91 95555 55551"})
+
+    detail = await client.get(f"/api/v1/leads/{lead_id}", headers=headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["normalized_phone"] == "+919555555551"
+    assert body["normalized_email"] == "detail@example.com"
+    assert len(body["sources"]) == 2
+
+    updated = await client.patch(f"/api/v1/leads/{lead_id}", headers=headers, json={"lead_status": "QUALIFIED"})
+    assert updated.status_code == 200
+    assert updated.json()["lead_status"] == "QUALIFIED"
+    assert len(updated.json()["sources"]) == 2
+
+
+async def _user_id(email):
+    factory = get_session_factory()
+    async with factory() as session:
+        from sqlalchemy import select as _select
+        return (await session.execute(_select(User.id).where(User.email == email))).scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_sales_executive_only_sees_and_manages_assigned_leads(client, seeded_users):
+    """Spec 01/08 (E2E BUG-7): executives are limited to leads assigned to them."""
+    admin = await _login(client, ADMIN_EMAIL)
+    manager = await _login(client, MANAGER_EMAIL)
+    exec_headers = await _login(client, EXEC_EMAIL)
+    exec_id = str(await _user_id(EXEC_EMAIL))
+    admin_id = str(await _user_id(ADMIN_EMAIL))
+
+    unassigned = (await client.post("/api/v1/leads", headers=admin, json={"full_name": "Scope Unassigned", "phone": "9666666601"})).json()["lead_id"]
+    assigned = (await client.post("/api/v1/leads", headers=admin, json={"full_name": "Scope Assigned", "phone": "9666666602"})).json()["lead_id"]
+    resp = await client.patch(f"/api/v1/leads/{assigned}", headers=manager, json={"assigned_executive_id": exec_id})
+    assert resp.status_code == 200
+
+    # list: only the assigned lead, even when asking for another executive's leads
+    listed = await client.get("/api/v1/leads", headers=exec_headers, params={"search": "Scope", "assigned_executive_id": admin_id})
+    assert listed.status_code == 200
+    assert [i["id"] for i in listed.json()["items"]] == [assigned]
+    assert len((await client.get("/api/v1/leads", headers=manager, params={"search": "Scope"})).json()["items"]) == 2
+
+    # detail / sources / update of a lead not assigned to the executive
+    assert (await client.get(f"/api/v1/leads/{unassigned}", headers=exec_headers)).status_code == 403
+    assert (await client.get(f"/api/v1/leads/{unassigned}/sources", headers=exec_headers)).status_code == 403
+    assert (await client.patch(f"/api/v1/leads/{unassigned}", headers=exec_headers, json={"assigned_executive_id": exec_id})).status_code == 403
+
+    # own lead: may read and update status, but may not reassign it
+    assert (await client.get(f"/api/v1/leads/{assigned}", headers=exec_headers)).status_code == 200
+    ok = await client.patch(f"/api/v1/leads/{assigned}", headers=exec_headers, json={"lead_status": "QUALIFIED"})
+    assert ok.status_code == 200 and ok.json()["lead_status"] == "QUALIFIED"
+    reassign = await client.patch(f"/api/v1/leads/{assigned}", headers=exec_headers, json={"assigned_executive_id": admin_id})
+    assert reassign.status_code == 403
+    assert (await client.get(f"/api/v1/leads/{assigned}", headers=manager)).json()["assigned_executive_id"] == exec_id
+
+
+@pytest.mark.asyncio
+async def test_new_manual_lead_from_executive_is_assigned_to_them(client, seeded_users):
+    exec_headers = await _login(client, EXEC_EMAIL)
+    exec_id = str(await _user_id(EXEC_EMAIL))
+    created = await client.post("/api/v1/leads", headers=exec_headers, json={"full_name": "Walk In Buyer", "phone": "9666666603"})
+    assert created.status_code == 201
+    detail = await client.get(f"/api/v1/leads/{created.json()['lead_id']}", headers=exec_headers)
+    assert detail.status_code == 200
+    assert detail.json()["assigned_executive_id"] == exec_id

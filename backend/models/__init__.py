@@ -31,8 +31,18 @@ from backend.models.visit_reminder import VisitReminder, ReminderType, ReminderS
 from backend.models.customer_account import CustomerAccount, CustomerAccountStatus
 from backend.models.customer_session import CustomerSession
 from backend.models.customer_verification_token import CustomerVerificationToken, TokenPurpose
+from backend.models.customer_notification_delivery import (
+    CustomerNotificationDelivery,
+    CustomerNotificationEvent,
+    CustomerNotificationChannel,
+    CustomerDeliveryStatus,
+)
 
 __all__ = [
+    "CustomerNotificationDelivery",
+    "CustomerNotificationEvent",
+    "CustomerNotificationChannel",
+    "CustomerDeliveryStatus",
     "Base",
     "TimestampMixin",
     "User",

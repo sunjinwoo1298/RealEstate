@@ -23,6 +23,7 @@ from backend.schemas.lead import (
     LeadDetailResponse,
     LeadListItem,
     LeadListResponse,
+    LeadPublic,
     LeadSourcePublic,
     LeadUpdateRequest,
     ManualLeadCreateRequest,
@@ -37,6 +38,19 @@ from backend.services.webhook_security_service import verify_webhook_signature
 
 router = APIRouter(prefix="/leads", tags=["Leads"])
 
+
+def _to_lead_detail(lead: Lead, sources: list[LeadSource]) -> LeadDetailResponse:
+    """
+    Builds the detail response from the lead's scalar columns plus explicitly
+    loaded sources. Validating LeadDetailResponse directly from the ORM object
+    would read the lazy `Lead.sources` relationship, which raises
+    MissingGreenlet under AsyncSession when it is not already loaded.
+    """
+    return LeadDetailResponse(
+        **LeadPublic.model_validate(lead).model_dump(),
+        sources=[LeadSourcePublic.model_validate(s) for s in sources],
+    )
+
 WEBHOOK_ELIGIBLE_SOURCES = {
     SourceType.WEBSITE,
     SourceType.PROPERTY_PORTAL,
@@ -49,7 +63,7 @@ WEBHOOK_ELIGIBLE_SOURCES = {
 async def create_manual_lead(
     payload: ManualLeadCreateRequest,
     db: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> IngestionResponse:
     result = await LeadIngestionService.ingest(
         db,
@@ -63,6 +77,23 @@ async def create_manual_lead(
         raw_payload={"notes": payload.notes} if payload.notes else {},
         consent_status=payload.consent_status,
     )
+    # Sales executives only see leads assigned to them, so a brand-new buyer
+    # an executive enters by hand is assigned to that executive. A match to an
+    # existing buyer keeps its current assignment untouched.
+    if (
+        LeadService.is_scoped_to_assigned_leads(current_user)
+        and result.created_new_lead
+        and result.lead.assigned_executive_id is None
+    ):
+        await LeadService.update_lead(
+            db,
+            result.lead.id,
+            full_name=None,
+            preferred_language=None,
+            lead_status=None,
+            assigned_executive_id=current_user.id,
+            consent_status=None,
+        )
     return IngestionResponse(
         lead_id=result.lead.id,
         lead_source_id=result.lead_source.id,
@@ -174,8 +205,10 @@ async def list_leads(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> LeadListResponse:
+    if LeadService.is_scoped_to_assigned_leads(current_user):
+        assigned_executive_id = current_user.id
     leads, total, new_count = await LeadService.list_leads(
         db,
         search=search,
@@ -229,13 +262,11 @@ async def review_potential_duplicate(
 async def get_lead(
     lead_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> LeadDetailResponse:
-    lead = await LeadService.get_lead_by_id(db, lead_id)
+    lead = await LeadService.get_accessible_lead(db, lead_id, current_user)
     sources = await LeadService.get_sources_for_lead(db, lead_id)
-    return LeadDetailResponse.model_validate(lead).model_copy(
-        update={"sources": [LeadSourcePublic.model_validate(s) for s in sources]}
-    )
+    return _to_lead_detail(lead, sources)
 
 
 @router.patch("/{lead_id}", response_model=LeadDetailResponse, summary="Update a lead")
@@ -243,8 +274,10 @@ async def update_lead(
     lead_id: uuid.UUID,
     payload: LeadUpdateRequest,
     db: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> LeadDetailResponse:
+    existing = await LeadService.get_accessible_lead(db, lead_id, current_user)
+    LeadService.ensure_can_assign(current_user, existing, payload.assigned_executive_id)
     lead = await LeadService.update_lead(
         db,
         lead_id,
@@ -255,16 +288,15 @@ async def update_lead(
         consent_status=payload.consent_status,
     )
     sources = await LeadService.get_sources_for_lead(db, lead_id)
-    return LeadDetailResponse.model_validate(lead).model_copy(
-        update={"sources": [LeadSourcePublic.model_validate(s) for s in sources]}
-    )
+    return _to_lead_detail(lead, sources)
 
 
 @router.get("/{lead_id}/sources", response_model=list[LeadSourcePublic], summary="List a lead's source enquiries")
 async def get_lead_sources(
     lead_id: uuid.UUID,
     db: AsyncSession = Depends(get_db_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[LeadSourcePublic]:
+    await LeadService.get_accessible_lead(db, lead_id, current_user)
     sources = await LeadService.get_sources_for_lead(db, lead_id)
     return [LeadSourcePublic.model_validate(s) for s in sources]

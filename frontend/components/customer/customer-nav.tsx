@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/customer/dashboard", label: "Dashboard" },
   { href: "/customer/chat", label: "Chat" },
   { href: "/customer/visits", label: "Visits" },
+  { href: "/customer/notifications", label: "Notifications" },
   { href: "/customer/profile", label: "My Profile" },
   { href: "/projects", label: "Projects" },
   { href: "/customer/settings", label: "Settings" },

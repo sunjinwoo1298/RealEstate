@@ -4,7 +4,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { useCustomerAuth } from "@/lib/customer-auth-context";
-import { customerApiClient, CustomerApiError, CustomerProfile } from "@/lib/customer-api-client";
+import {
+  customerApiClient,
+  CustomerApiError,
+  CustomerProfile,
+  NotificationPreferences,
+} from "@/lib/customer-api-client";
 
 export default function CustomerSettingsPage() {
   const { customer, isLoading, logout } = useCustomerAuth();
@@ -20,6 +25,10 @@ export default function CustomerSettingsPage() {
   const [changing, setChanging] = useState(false);
   const [changeError, setChangeError] = useState<string | null>(null);
   const [changeSuccess, setChangeSuccess] = useState<string | null>(null);
+
+  const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
+  const [prefsError, setPrefsError] = useState<string | null>(null);
+  const [savingPrefs, setSavingPrefs] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !customer) {
@@ -44,6 +53,28 @@ export default function CustomerSettingsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional data fetch on customer load
     if (customer) loadProfile();
   }, [customer, loadProfile]);
+
+  useEffect(() => {
+    if (!customer) return;
+    customerApiClient
+      .getNotificationPreferences()
+      .then(setPrefs)
+      .catch((err) =>
+        setPrefsError(err instanceof CustomerApiError ? err.message : "Unable to load email preferences.")
+      );
+  }, [customer]);
+
+  const handleToggleTransactional = async (enabled: boolean) => {
+    setSavingPrefs(true);
+    setPrefsError(null);
+    try {
+      setPrefs(await customerApiClient.updateNotificationPreferences(enabled));
+    } catch (err) {
+      setPrefsError(err instanceof CustomerApiError ? err.message : "Unable to save your email preference.");
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,6 +149,47 @@ export default function CustomerSettingsPage() {
               <dd className="font-semibold text-[#202B28]">{profile.status}</dd>
             </div>
           </dl>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-[#E5E5DE] shadow-xs p-6">
+        <h2 className="font-heading font-bold text-base text-[#202B28] mb-1">Email notifications</h2>
+        <p className="text-sm text-[#737C76] mb-4">
+          Essential visit updates are service messages about a site visit you requested: booking confirmations,
+          reschedule and cancellation notices, and reminders 24 hours and 2 hours before your visit. They are sent only
+          to your verified email address and are separate from marketing.
+        </p>
+        {prefsError && (
+          <div className="mb-4 flex items-start gap-2 text-sm text-[#C34D4D] bg-[#FDF2F2] border border-[#F8D2D2] rounded-lg px-3 py-2.5">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{prefsError}</span>
+          </div>
+        )}
+        {prefs && (
+          <>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 accent-[#173B35]"
+                checked={prefs.transactional_email_enabled}
+                disabled={savingPrefs}
+                onChange={(e) => handleToggleTransactional(e.target.checked)}
+              />
+              <span className="text-sm text-[#202B28]">
+                <span className="font-semibold">Essential visit updates by email</span>
+                <span className="block text-xs text-[#737C76] mt-0.5">
+                  If you turn this off, you will not receive booking confirmations or reminders by email. You can still
+                  see your visits under Visits.
+                </span>
+              </span>
+            </label>
+            {!prefs.email_verified && (
+              <p className="mt-3 text-xs text-[#B7791F]">Your email is not verified, so no emails will be sent.</p>
+            )}
+            <p className="mt-4 text-xs text-[#737C76]">
+              We do not send marketing email today. If that changes, we will ask for your separate consent first.
+            </p>
+          </>
         )}
       </div>
 

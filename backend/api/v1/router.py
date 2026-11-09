@@ -5,6 +5,10 @@ from backend.api.v1.endpoints.customer_auth import router as customer_auth_route
 from backend.api.v1.endpoints.customer import router as customer_router
 from backend.api.v1.endpoints.customer_conversations import router as customer_conversations_router
 from backend.api.v1.endpoints.customer_visits import router as customer_visits_router
+from backend.api.v1.endpoints.customer_notifications import (
+    customer_router as customer_notifications_router,
+    staff_router as customer_notifications_staff_router,
+)
 from backend.api.v1.endpoints.admin_users import router as admin_users_router
 from backend.api.v1.endpoints.leads import router as leads_router
 from backend.api.v1.endpoints.chat import router as chat_router
@@ -30,6 +34,8 @@ api_v1_router.include_router(customer_auth_router)
 api_v1_router.include_router(customer_router)
 api_v1_router.include_router(customer_conversations_router)
 api_v1_router.include_router(customer_visits_router)
+api_v1_router.include_router(customer_notifications_router)
+api_v1_router.include_router(customer_notifications_staff_router)
 api_v1_router.include_router(admin_users_router)
 api_v1_router.include_router(leads_router)
 api_v1_router.include_router(chat_router)

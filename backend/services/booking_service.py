@@ -14,7 +14,9 @@ from backend.models.lead import Lead, LeadStatus
 from backend.models.project import Project
 from backend.models.site_visit import SiteVisit, SiteVisitStatus
 from backend.models.visit_event import VisitEvent, VisitEventType
+from backend.models.customer_notification_delivery import CustomerNotificationEvent
 from backend.services.availability_service import AvailabilityService, IST
+from backend.services.customer_notification_service import CustomerNotificationService
 from backend.services.reminder_service import ReminderService
 
 
@@ -182,6 +184,9 @@ class BookingService:
         lead.lead_status = LeadStatus.VISIT_BOOKED
 
         ReminderService.schedule_reminders_for_visit(db, visit)
+        # Outbox row is part of this same transaction: it only becomes
+        # deliverable if (and when) the booking commits.
+        await CustomerNotificationService.enqueue_visit_event(db, visit, CustomerNotificationEvent.SITE_VISIT_BOOKED)
 
         await db.commit()
         await db.refresh(visit)
@@ -252,6 +257,7 @@ class BookingService:
             )
         )
         await ReminderService.cancel_pending_reminders(db, visit.id)
+        await CustomerNotificationService.enqueue_visit_event(db, visit, CustomerNotificationEvent.SITE_VISIT_CANCELLED)
         await db.commit()
         await db.refresh(visit)
         return visit
@@ -321,6 +327,9 @@ class BookingService:
             )
         )
         ReminderService.schedule_reminders_for_visit(db, visit)
+        await CustomerNotificationService.enqueue_visit_event(
+            db, visit, CustomerNotificationEvent.SITE_VISIT_RESCHEDULED, previous_start_time=old_start_time
+        )
         await db.commit()
         await db.refresh(visit)
         return visit
@@ -345,6 +354,11 @@ class BookingService:
 
         if status not in (SiteVisitStatus.COMPLETED, SiteVisitStatus.NO_SHOW):
             raise ValidationException("Attendance status must be COMPLETED or NO_SHOW")
+
+        # A visit that has not started yet can be neither attended nor missed
+        # (CLAUDE.md: future appointments must never count as no-shows).
+        if visit.start_time > datetime.now(timezone.utc):
+            raise ConflictException("Attendance can only be recorded once the visit has started")
 
         visit.status = status
         db.add(

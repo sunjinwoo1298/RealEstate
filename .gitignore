@@ -68,4 +68,5 @@ yarn-error.log*
 Thumbs.db
 /context
 /features
+/test-results
 

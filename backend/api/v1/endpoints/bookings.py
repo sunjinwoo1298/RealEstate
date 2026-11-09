@@ -145,6 +145,7 @@ async def cancel_booking(
 ) -> SiteVisitPublic:
     visit = await BookingService.get_site_visit(db, booking_id)
     _require_access(principal, visit)
+    _require_executive_scope(principal, visit)
     updated = await BookingService.cancel_site_visit(
         db, booking_id, actor_id=principal.user.id if principal.user else None
     )
@@ -161,6 +162,7 @@ async def reschedule_booking(
 ) -> SiteVisitPublic:
     visit = await BookingService.get_site_visit(db, booking_id)
     _require_access(principal, visit)
+    _require_executive_scope(principal, visit)
     updated = await BookingService.reschedule_site_visit(
         db, booking_id, new_start_time=payload.start_time, actor_id=principal.user.id if principal.user else None
     )

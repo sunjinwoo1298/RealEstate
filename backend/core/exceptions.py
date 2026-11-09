@@ -122,7 +122,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-        logger.warning(f"Request validation error on {request.url.path}: {exc.errors()}")
+        # Pydantic error dicts echo the submitted value under "input" (for a
+        # missing field, the whole request body). That can be a password,
+        # reset/verification token or buyer PII, so it is never logged or
+        # returned -- loc/type/msg/ctx are enough to explain the failure.
+        errors = [{k: v for k, v in err.items() if k != "input"} for err in exc.errors()]
+        logger.warning(f"Request validation error on {request.url.path}: {errors}")
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
@@ -136,7 +141,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                     # serialize that directly, so it must go through
                     # jsonable_encoder first (this previously 500'd for any
                     # validator that raises a plain ValueError).
-                    "details": jsonable_encoder(exc.errors()),
+                    "details": jsonable_encoder(errors),
                 },
             },
         )

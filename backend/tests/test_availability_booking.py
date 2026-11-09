@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from backend.main import app
 from backend.core.database import get_session_factory
@@ -467,6 +467,16 @@ async def test_attendance_marking_and_duplicate_rejection(
         headers=headers,
     )
     booking_id = booked.json()["id"]
+
+    # Attendance may only be recorded once the visit has started; simulate
+    # the visit time passing by moving the booked visit into the past.
+    now = datetime.now(timezone.utc)
+    await db_session.execute(
+        update(SiteVisit)
+        .where(SiteVisit.id == uuid.UUID(booking_id))
+        .values(start_time=now - timedelta(hours=2), end_time=now - timedelta(hours=1))
+    )
+    await db_session.commit()
 
     attendance = await client.post(
         f"/api/v1/bookings/{booking_id}/attendance", json={"status": "COMPLETED"}, headers=headers

@@ -179,6 +179,35 @@ class Settings(BaseSettings):
         default=1800, description="Maximum backoff delay between reminder delivery retries"
     )
 
+    # Customer transactional email (Feature 14). EMAIL_PROVIDER=log is the
+    # safe development/test default: nothing is ever sent for real.
+    EMAIL_PROVIDER: str = Field(default="log", description="Customer email provider: 'log' (simulated) or 'resend'")
+    EMAIL_API_KEY: str = Field(default="", description="Email provider API key (secret; never exposed to the frontend)")
+    EMAIL_FROM_ADDRESS: str = Field(default="", description="Verified sender address for customer email")
+    EMAIL_FROM_NAME: str = Field(default="EstateFlow", description="Sender display name for customer email")
+    EMAIL_REPLY_TO: str = Field(default="", description="Optional reply-to address")
+    EMAIL_SUPPORT_CONTACT: str = Field(
+        default="", description="Optional verified support contact line shown in emails; omitted when empty"
+    )
+    EMAIL_PROVIDER_TIMEOUT_SECONDS: float = Field(default=10.0, description="HTTP timeout for the email provider")
+    CUSTOMER_PORTAL_BASE_URL: str = Field(
+        default="", description="Public customer-portal base URL used in email links; falls back to FRONTEND_BASE_URL"
+    )
+    CUSTOMER_EMAIL_WORKER_POLL_SECONDS: int = Field(default=5, description="Customer email worker poll interval")
+    CUSTOMER_EMAIL_WORKER_BATCH_SIZE: int = Field(default=25, description="Max deliveries claimed per poll")
+    CUSTOMER_EMAIL_MAX_ATTEMPTS: int = Field(default=5, description="Max attempts before a delivery is FAILED")
+    CUSTOMER_EMAIL_RETRY_BASE_SECONDS: int = Field(default=30, description="Base exponential-backoff delay")
+    CUSTOMER_EMAIL_RETRY_MAX_SECONDS: int = Field(default=1800, description="Maximum backoff delay")
+    CUSTOMER_EMAIL_PROCESSING_LEASE_SECONDS: int = Field(
+        default=300, description="A PROCESSING delivery older than this is considered orphaned by a crashed worker"
+    )
+    CUSTOMER_DELIVERY_RETRY_RATE_LIMIT_MAX_ATTEMPTS: int = Field(
+        default=20, description="Max admin delivery-retry actions per window per admin"
+    )
+    CUSTOMER_DELIVERY_RETRY_RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=300, description="Admin delivery-retry rate limit window in seconds"
+    )
+
     model_config = SettingsConfigDict(
         env_file=(
             ".env.local",
@@ -230,6 +259,10 @@ class Settings(BaseSettings):
             if source and secret:
                 result[source.strip().upper()] = secret.strip()
         return result
+
+    @property
+    def customer_portal_base_url(self) -> str:
+        return (self.CUSTOMER_PORTAL_BASE_URL or self.FRONTEND_BASE_URL).rstrip("/")
 
     @property
     def async_database_url(self) -> str:

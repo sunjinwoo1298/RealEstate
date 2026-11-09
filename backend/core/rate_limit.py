@@ -160,3 +160,17 @@ async def enforce_customer_handoff_rate_limit(identifier: str) -> None:
             raise RateLimitException(message="Too many requests for a sales executive. Please try again later.")
     except RedisError as e:
         logger.warning(f"Customer handoff rate limiter unavailable, failing open: {e}")
+
+
+async def enforce_customer_delivery_retry_rate_limit(identifier: str) -> None:
+    """Rate-limits admin retries of failed customer deliveries (keyed by admin id). Fails open."""
+    key = f"customer_delivery_retry_rl:{identifier}"
+    client = get_redis_client()
+    try:
+        attempts = await client.incr(key)
+        if attempts == 1:
+            await client.expire(key, settings.CUSTOMER_DELIVERY_RETRY_RATE_LIMIT_WINDOW_SECONDS)
+        if attempts > settings.CUSTOMER_DELIVERY_RETRY_RATE_LIMIT_MAX_ATTEMPTS:
+            raise RateLimitException(message="Too many retry requests. Please try again later.")
+    except RedisError as e:
+        logger.warning(f"Customer delivery retry rate limiter unavailable, failing open: {e}")

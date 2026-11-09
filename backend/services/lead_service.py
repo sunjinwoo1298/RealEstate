@@ -7,15 +7,43 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.core.exceptions import NotFoundException
+from backend.core.exceptions import ForbiddenException, NotFoundException
 from backend.models.lead import ConsentStatus, Lead, LeadStatus
 from backend.models.lead_source import LeadSource, SourceType
 from backend.models.potential_duplicate import DuplicateReviewStatus, PotentialDuplicateMatch
-from backend.models.user import User
+from backend.models.user import User, UserRole
 
 
 class LeadService:
     """Read/update operations for leads backing the staff-facing API."""
+
+    # --- Staff lead visibility -------------------------------------------
+    # Spec 01/08: a SALES_EXECUTIVE may only view and manage leads assigned
+    # to them (Lead.assigned_executive_id, the same definition analytics
+    # uses for "assigned leads"). Managers and admins see every lead, and
+    # only they may (re)assign a lead.
+
+    @staticmethod
+    def is_scoped_to_assigned_leads(user: User) -> bool:
+        return user.role == UserRole.SALES_EXECUTIVE
+
+    @staticmethod
+    def ensure_can_access(user: User, lead: Lead) -> None:
+        if LeadService.is_scoped_to_assigned_leads(user) and lead.assigned_executive_id != user.id:
+            raise ForbiddenException("You do not have permission to access this lead")
+
+    @staticmethod
+    async def get_accessible_lead(db: AsyncSession, lead_id: uuid.UUID, user: User) -> Lead:
+        lead = await LeadService.get_lead_by_id(db, lead_id)
+        LeadService.ensure_can_access(user, lead)
+        return lead
+
+    @staticmethod
+    def ensure_can_assign(user: User, lead: Lead, new_executive_id: Optional[uuid.UUID]) -> None:
+        if new_executive_id is None or new_executive_id == lead.assigned_executive_id:
+            return
+        if LeadService.is_scoped_to_assigned_leads(user):
+            raise ForbiddenException("Only an admin or manager may reassign a lead")
 
     @staticmethod
     async def get_lead_by_id(db: AsyncSession, lead_id: uuid.UUID, with_sources: bool = False) -> Lead:

@@ -487,6 +487,21 @@ async def test_logging_provider_marks_simulated_not_sent(db_session, seeded_user
 # --- Attendance -----------------------------------------------------------
 
 
+async def _mark_visit_started(db_session, booking_id: str) -> None:
+    """
+    Bookings can only be created in the future, but attendance may only be
+    recorded once a visit has started. Simulate the passage of time by moving
+    the booked visit into the past (reminder rows are left untouched).
+    """
+    now = datetime.now(timezone.utc)
+    await db_session.execute(
+        update(SiteVisit)
+        .where(SiteVisit.id == uuid.UUID(booking_id))
+        .values(start_time=now - timedelta(hours=2), end_time=now - timedelta(hours=1))
+    )
+    await db_session.commit()
+
+
 @pytest.mark.asyncio
 async def test_authorized_staff_can_mark_attended_and_no_show(client, db_session, seeded_users, project_with_capacity, test_lead):
     project, _ = project_with_capacity
@@ -501,6 +516,7 @@ async def test_authorized_staff_can_mark_attended_and_no_show(client, db_session
         headers=headers,
     )
     booking_id = booked.json()["id"]
+    await _mark_visit_started(db_session, booking_id)
 
     resp = await client.post(f"/api/v1/bookings/{booking_id}/attendance", json={"status": "NO_SHOW"}, headers=headers)
     assert resp.status_code == 200
@@ -544,6 +560,7 @@ async def test_invalid_attendance_transition_rejected(client, db_session, seeded
         headers=headers,
     )
     booking_id = booked.json()["id"]
+    await _mark_visit_started(db_session, booking_id)
 
     first = await client.post(f"/api/v1/bookings/{booking_id}/attendance", json={"status": "COMPLETED"}, headers=headers)
     assert first.status_code == 200
@@ -566,6 +583,7 @@ async def test_attendance_update_creates_visit_event(client, db_session, seeded_
         headers=headers,
     )
     booking_id = booked.json()["id"]
+    await _mark_visit_started(db_session, booking_id)
 
     await client.post(f"/api/v1/bookings/{booking_id}/attendance", json={"status": "COMPLETED"}, headers=headers)
 
@@ -595,6 +613,7 @@ async def test_finalized_attendance_cancels_pending_reminders_via_api(
         headers=headers,
     )
     booking_id = booked.json()["id"]
+    await _mark_visit_started(db_session, booking_id)
 
     reminders_before = await db_session.execute(
         select(VisitReminder).where(VisitReminder.site_visit_id == uuid.UUID(booking_id))
@@ -611,3 +630,35 @@ async def test_finalized_attendance_cancels_pending_reminders_via_api(
     rows = list(reminders_after.scalars().all())
     assert len(rows) == 2
     assert all(r.status == ReminderStatus.CANCELLED for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_attendance_rejected_before_visit_starts(client, db_session, seeded_users, project_with_capacity, test_lead):
+    """E2E BUG-8: a future visit can be neither attended nor a no-show."""
+    project, _ = project_with_capacity
+    start_time = datetime.now(timezone.utc) + timedelta(days=3)
+    await _add_full_day_rule(
+        db_session, executive_id=seeded_users["exec1"].id, project_id=project.id, day_of_week=start_time.astimezone(IST).weekday()
+    )
+    headers = await _login(client, ADMIN_EMAIL)
+    booked = await client.post(
+        "/api/v1/bookings",
+        json={"lead_id": str(test_lead.id), "project_id": str(project.id), "start_time": start_time.isoformat()},
+        headers=headers,
+    )
+    booking_id = booked.json()["id"]
+
+    for status in ("COMPLETED", "NO_SHOW"):
+        resp = await client.post(f"/api/v1/bookings/{booking_id}/attendance", json={"status": status}, headers=headers)
+        assert resp.status_code == 409
+
+    detail = await client.get(f"/api/v1/bookings/{booking_id}", headers=headers)
+    assert detail.json()["status"] == "CONFIRMED"
+    reminders = await db_session.execute(
+        select(VisitReminder).where(VisitReminder.site_visit_id == uuid.UUID(booking_id)).execution_options(populate_existing=True)
+    )
+    assert all(r.status != ReminderStatus.CANCELLED for r in reminders.scalars().all())
+
+    await _mark_visit_started(db_session, booking_id)
+    resp = await client.post(f"/api/v1/bookings/{booking_id}/attendance", json={"status": "COMPLETED"}, headers=headers)
+    assert resp.status_code == 200

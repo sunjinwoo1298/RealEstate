@@ -93,6 +93,13 @@ export default function SiteVisitsPage() {
   const isAdmin = user?.role === "ADMIN";
 
   const [visits, setVisits] = useState<SiteVisitDetail[]>([]);
+  // Attendance can only be recorded once a visit has started (enforced by the
+  // backend too); the clock is refreshed every minute so the buttons appear on time.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   const [projects, setProjects] = useState<ProjectPublic[]>([]);
   const [statusFilter, setStatusFilter] = useState<SiteVisitStatus | "">("");
   const [loading, setLoading] = useState(true);
@@ -373,18 +380,22 @@ export default function SiteVisitsPage() {
                   <td className="px-6 py-3 text-right space-x-3 whitespace-nowrap">
                     {visit.status === "CONFIRMED" && (
                       <>
-                        <button
-                          onClick={() => handleAttendance(visit.id, "COMPLETED")}
-                          className="text-xs font-semibold text-[#27845B] hover:underline"
-                        >
-                          Mark Attended
-                        </button>
-                        <button
-                          onClick={() => handleAttendance(visit.id, "NO_SHOW")}
-                          className="text-xs font-semibold text-[#B9772F] hover:underline"
-                        >
-                          No-show
-                        </button>
+                        {new Date(visit.start_time).getTime() <= nowMs && (
+                          <>
+                            <button
+                              onClick={() => handleAttendance(visit.id, "COMPLETED")}
+                              className="text-xs font-semibold text-[#27845B] hover:underline"
+                            >
+                              Mark Attended
+                            </button>
+                            <button
+                              onClick={() => handleAttendance(visit.id, "NO_SHOW")}
+                              className="text-xs font-semibold text-[#B9772F] hover:underline"
+                            >
+                              No-show
+                            </button>
+                          </>
+                        )}
                         <button
                           onClick={() => handleCancel(visit.id)}
                           className="text-xs font-semibold text-[#C34D4D] hover:underline"
