@@ -51,6 +51,19 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=15, description="Access token lifetime in minutes")
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, description="Refresh token lifetime in days")
 
+    # Idempotent refresh recovery (BUG-18): lets the *immediately previous*
+    # refresh token be retried for a short window and return the same
+    # successor, so a response lost to a reload/navigation is not mistaken
+    # for token theft. The successor is stored only AES-256-GCM encrypted.
+    REFRESH_RECOVERY_KEY: str = Field(
+        default="",
+        description="Dedicated base64url-encoded 32-byte key for refresh-token recovery. Empty disables recovery "
+        "(strict reuse detection only). Generate with: python -c \"import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())\"",
+    )
+    REFRESH_RECOVERY_GRACE_SECONDS: int = Field(
+        default=20, ge=0, le=120, description="Grace period (seconds) in which the previous refresh token can be retried; 0 disables"
+    )
+
     # Session cookie
     REFRESH_COOKIE_NAME: str = Field(default="estateflow_refresh_token", description="Refresh token cookie name")
     COOKIE_SECURE: bool = Field(default=True, description="Whether cookies require HTTPS (disable only for local http dev)")

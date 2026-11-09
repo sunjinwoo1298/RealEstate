@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core import refresh_recovery
 from backend.core.config import settings
 from backend.core.exceptions import ConflictException, UnauthorizedException, ValidationException
 from backend.core.logging import logger
@@ -191,7 +192,14 @@ class CustomerAuthService:
         that customer, same precaution as the staff auth flow.
         """
         token_hash = hash_refresh_token(raw_refresh_token)
-        result = await db.execute(select(CustomerSession).where(CustomerSession.refresh_token_hash == token_hash))
+        # Row lock: concurrent refreshes presenting the same token serialize
+        # here, so exactly one rotates and the rest hit the recovery path.
+        result = await db.execute(
+            select(CustomerSession)
+            .where(CustomerSession.refresh_token_hash == token_hash)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         session = result.scalar_one_or_none()
 
         if session is None:
@@ -203,6 +211,10 @@ class CustomerAuthService:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
 
         if session.revoked_at is not None:
+            recovered = await CustomerAuthService._recover_successor(db, session, now)
+            if recovered is not None:
+                access_token, successor_raw = recovered
+                return access_token, successor_raw, settings.CUSTOMER_ACCESS_TOKEN_EXPIRE_MINUTES * 60
             logger.warning(f"Customer refresh token reuse detected for customer_account_id={session.customer_account_id}")
             await CustomerAuthService._revoke_all_sessions(db, session.customer_account_id)
             raise UnauthorizedException("Refresh token has been revoked")
@@ -230,9 +242,71 @@ class CustomerAuthService:
         session.revoked_at = now
         session.last_used_at = now
         session.replaced_by_id = new_session.id
+        # The predecessor's recovery data is obsolete once this session rotates.
+        await CustomerAuthService._clear_predecessor_recovery(db, session.id)
+        if refresh_recovery.is_enabled():
+            session.successor_token_encrypted = refresh_recovery.encrypt_successor(
+                new_raw_refresh_token, session.id, new_session.id
+            )
+            session.successor_recoverable_until = refresh_recovery.recovery_deadline(now)
         await db.commit()
 
         return access_token, new_raw_refresh_token, settings.CUSTOMER_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+    @staticmethod
+    async def _recover_successor(db: AsyncSession, previous: CustomerSession, now: datetime):
+        """
+        Idempotent retry of an already-rotated token: returns (new access token,
+        the SAME successor refresh token) iff the retry is inside the grace
+        window, the successor is still the unrotated, unrevoked, unexpired
+        immediate successor, and the account is still ACTIVE. Otherwise None,
+        and the caller applies normal reuse detection.
+        """
+        if (
+            previous.replaced_by_id is None
+            or not previous.successor_token_encrypted
+            or not refresh_recovery.within_window(previous.successor_recoverable_until, now)
+        ):
+            return None
+
+        successor = (
+            await db.execute(
+                select(CustomerSession)
+                .where(CustomerSession.id == previous.replaced_by_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if successor is None or successor.revoked_at is not None:
+            return None
+        successor_expires = successor.expires_at
+        if successor_expires.tzinfo is None:
+            successor_expires = successor_expires.replace(tzinfo=timezone.utc)
+        if successor_expires < now:
+            return None
+
+        customer = (
+            await db.execute(select(CustomerAccount).where(CustomerAccount.id == previous.customer_account_id))
+        ).scalar_one_or_none()
+        if customer is None or customer.status != CustomerAccountStatus.ACTIVE:
+            return None
+
+        raw_successor = refresh_recovery.decrypt_successor(
+            previous.successor_token_encrypted, previous.id, successor.id
+        )
+        if raw_successor is None or hash_refresh_token(raw_successor) != successor.refresh_token_hash:
+            return None
+
+        logger.info(f"Customer refresh recovered for customer_account_id={previous.customer_account_id}")
+        return create_customer_access_token(str(customer.id)), raw_successor
+
+    @staticmethod
+    async def _clear_predecessor_recovery(db: AsyncSession, session_id: uuid.UUID) -> None:
+        await db.execute(
+            update(CustomerSession)
+            .where(CustomerSession.replaced_by_id == session_id)
+            .values(successor_token_encrypted=None, successor_recoverable_until=None)
+        )
 
     @staticmethod
     async def revoke_refresh_token(db: AsyncSession, raw_refresh_token: str) -> None:
@@ -241,6 +315,7 @@ class CustomerAuthService:
         session = result.scalar_one_or_none()
         if session is not None and session.revoked_at is None:
             session.revoked_at = datetime.now(timezone.utc)
+            await CustomerAuthService._clear_predecessor_recovery(db, session.id)
             await db.commit()
 
     @staticmethod
@@ -250,6 +325,12 @@ class CustomerAuthService:
             update(CustomerSession)
             .where(CustomerSession.customer_account_id == customer_account_id, CustomerSession.revoked_at.is_(None))
             .values(revoked_at=now)
+        )
+        # Nothing may be recoverable once the chain is revoked.
+        await db.execute(
+            update(CustomerSession)
+            .where(CustomerSession.customer_account_id == customer_account_id)
+            .values(successor_token_encrypted=None, successor_recoverable_until=None)
         )
         await db.commit()
 

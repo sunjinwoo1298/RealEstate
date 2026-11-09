@@ -329,7 +329,11 @@ async def test_suspended_customer_loses_access_with_existing_access_token(client
 
 
 @pytest.mark.asyncio
-async def test_refresh_rotates_token_and_reuse_is_rejected(client, fake_email, cleanup_customers):
+async def test_refresh_rotates_token_and_reuse_is_rejected(client, fake_email, cleanup_customers, monkeypatch):
+    # Outside the BUG-18 recovery window a retried old token is genuine reuse.
+    from backend.core.config import settings
+
+    monkeypatch.setattr(settings, 'REFRESH_RECOVERY_GRACE_SECONDS', 0)
     email, _, _ = await _register_and_verify(client, fake_email, cleanup_customers)
     login_resp = await client.post("/api/v1/customer-auth/login", json={"email": email, "password": PASSWORD})
     old_cookie = login_resp.cookies.get("estateflow_customer_refresh_token")

@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,12 @@ class AuthSession(Base, TimestampMixin):
     replaced_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("auth_sessions.id", ondelete="SET NULL"), nullable=True
     )
+
+    # Recovery of the immediate successor if this (already rotated) token is
+    # retried within a short grace window. AES-GCM ciphertext only -- never the
+    # raw successor token. Cleared when the successor rotates or is revoked.
+    successor_token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    successor_recoverable_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="auth_sessions")
 

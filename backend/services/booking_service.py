@@ -17,6 +17,7 @@ from backend.models.visit_event import VisitEvent, VisitEventType
 from backend.models.customer_notification_delivery import CustomerNotificationEvent
 from backend.services.availability_service import AvailabilityService, IST
 from backend.services.customer_notification_service import CustomerNotificationService
+from backend.services.lead_lifecycle import LeadLifecycleService
 from backend.services.reminder_service import ReminderService
 
 
@@ -201,7 +202,7 @@ class BookingService:
                 },
             )
         )
-        lead.lead_status = LeadStatus.VISIT_BOOKED
+        await LeadLifecycleService.apply_booking(db, lead_id)
 
         ReminderService.schedule_reminders_for_visit(db, visit)
         # Outbox row is part of this same transaction: it only becomes
@@ -390,10 +391,7 @@ class BookingService:
             )
         )
 
-        lead_result = await db.execute(select(Lead).where(Lead.id == visit.lead_id))
-        lead = lead_result.scalar_one_or_none()
-        if lead is not None and status == SiteVisitStatus.COMPLETED:
-            lead.lead_status = LeadStatus.VISIT_COMPLETED
+        await LeadLifecycleService.apply_attendance(db, visit.lead_id, status)
 
         await ReminderService.cancel_pending_reminders(db, visit.id)
 

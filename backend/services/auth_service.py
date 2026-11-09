@@ -3,11 +3,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Tuple
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
 from backend.core.exceptions import UnauthorizedException
+from backend.core import refresh_recovery
 from backend.core.logging import logger
 from backend.core.security import (
     create_access_token,
@@ -77,8 +78,13 @@ class AuthService:
         a precaution and rejects the request.
         """
         token_hash = hash_refresh_token(raw_refresh_token)
+        # Row lock: concurrent refreshes presenting the same token serialize
+        # here, so exactly one rotates and the rest hit the recovery path.
         result = await db.execute(
-            select(AuthSession).where(AuthSession.refresh_token_hash == token_hash)
+            select(AuthSession)
+            .where(AuthSession.refresh_token_hash == token_hash)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         session = result.scalar_one_or_none()
 
@@ -91,7 +97,12 @@ class AuthService:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
 
         if session.revoked_at is not None:
-            # Reuse of a rotated/revoked token: treat as compromised and revoke
+            recovered = await AuthService._recover_successor(db, session, now)
+            if recovered is not None:
+                access_token, successor_raw = recovered
+                return access_token, successor_raw, settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            # Reuse of a rotated/revoked token outside the recovery window (or
+            # with nothing to recover): treat as compromised and revoke
             # every active session belonging to this user.
             logger.warning(f"Refresh token reuse detected for user_id={session.user_id}")
             await AuthService._revoke_all_sessions(db, session.user_id)
@@ -119,9 +130,69 @@ class AuthService:
 
         session.revoked_at = now
         session.replaced_by_id = new_session.id
+        # The predecessor's recovery data is obsolete once this session rotates.
+        await AuthService._clear_predecessor_recovery(db, session.id)
+        if refresh_recovery.is_enabled():
+            session.successor_token_encrypted = refresh_recovery.encrypt_successor(
+                new_raw_refresh_token, session.id, new_session.id
+            )
+            session.successor_recoverable_until = refresh_recovery.recovery_deadline(now)
         await db.commit()
 
         return access_token, new_raw_refresh_token, settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+    @staticmethod
+    async def _recover_successor(db: AsyncSession, previous: AuthSession, now: datetime):
+        """
+        Idempotent retry of an already-rotated token: returns (new access token,
+        the SAME successor refresh token) iff the retry is inside the grace
+        window, the successor is still the unrotated, unrevoked, unexpired
+        immediate successor, and the account is still active. Otherwise None,
+        and the caller applies normal reuse detection.
+        """
+        if (
+            previous.replaced_by_id is None
+            or not previous.successor_token_encrypted
+            or not refresh_recovery.within_window(previous.successor_recoverable_until, now)
+        ):
+            return None
+
+        successor = (
+            await db.execute(
+                select(AuthSession)
+                .where(AuthSession.id == previous.replaced_by_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if successor is None or successor.revoked_at is not None:
+            return None
+        successor_expires = successor.expires_at
+        if successor_expires.tzinfo is None:
+            successor_expires = successor_expires.replace(tzinfo=timezone.utc)
+        if successor_expires < now:
+            return None
+
+        user = (await db.execute(select(User).where(User.id == previous.user_id))).scalar_one_or_none()
+        if user is None or not user.is_active:
+            return None
+
+        raw_successor = refresh_recovery.decrypt_successor(
+            previous.successor_token_encrypted, previous.id, successor.id
+        )
+        if raw_successor is None or hash_refresh_token(raw_successor) != successor.refresh_token_hash:
+            return None
+
+        logger.info(f"Refresh recovered for user_id={previous.user_id} within grace window")
+        return create_access_token(user_id=str(user.id), role=user.role.value), raw_successor
+
+    @staticmethod
+    async def _clear_predecessor_recovery(db: AsyncSession, session_id: uuid.UUID) -> None:
+        await db.execute(
+            update(AuthSession)
+            .where(AuthSession.replaced_by_id == session_id)
+            .values(successor_token_encrypted=None, successor_recoverable_until=None)
+        )
 
     @staticmethod
     async def revoke_refresh_token(db: AsyncSession, raw_refresh_token: str) -> None:
@@ -133,6 +204,7 @@ class AuthService:
         session = result.scalar_one_or_none()
         if session is not None and session.revoked_at is None:
             session.revoked_at = datetime.now(timezone.utc)
+            await AuthService._clear_predecessor_recovery(db, session.id)
             await db.commit()
 
     @staticmethod
@@ -145,4 +217,10 @@ class AuthService:
         now = datetime.now(timezone.utc)
         for s in result.scalars().all():
             s.revoked_at = now
+        # Nothing may be recoverable once the chain is revoked.
+        await db.execute(
+            update(AuthSession)
+            .where(AuthSession.user_id == user_id)
+            .values(successor_token_encrypted=None, successor_recoverable_until=None)
+        )
         await db.commit()

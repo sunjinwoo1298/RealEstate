@@ -115,7 +115,11 @@ async def test_invalid_token_rejected(client):
 
 
 @pytest.mark.asyncio
-async def test_refresh_rotates_token_and_reuse_is_rejected(client, seeded_users):
+async def test_refresh_rotates_token_and_reuse_is_rejected(client, seeded_users, monkeypatch):
+    # Outside the BUG-18 recovery window a retried old token is genuine reuse.
+    from backend.core.config import settings
+
+    monkeypatch.setattr(settings, 'REFRESH_RECOVERY_GRACE_SECONDS', 0)
     login_resp = await client.post("/api/v1/auth/login", json={"email": ADMIN_EMAIL, "password": PASSWORD})
     old_refresh_cookie = login_resp.cookies.get("estateflow_refresh_token")
     assert old_refresh_cookie

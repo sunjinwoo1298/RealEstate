@@ -581,3 +581,148 @@ async def test_timezone_boundary_slot_generation(client, db_session, seeded_user
         start_ist = start_utc.astimezone(IST)
         assert start_ist.date() == target_date
         assert time(22, 0) <= start_ist.time() < time(23, 30)
+
+
+# --- BUG-24: lead lifecycle must never regress on visit events ---------------
+
+
+async def _book_started_visit(client, db_session, headers, project, lead_id, local_time):
+    """Books a visit then moves it into the past so attendance may be recorded."""
+    target_date = _next_weekday(2)
+    booked = await client.post(
+        "/api/v1/bookings",
+        json={
+            "lead_id": str(lead_id),
+            "project_id": str(project.id),
+            "start_time": _slot_start_utc(target_date, local_time).isoformat(),
+        },
+        headers=headers,
+    )
+    assert booked.status_code == 201, booked.text
+    visit_id = uuid.UUID(booked.json()["id"])
+    now = datetime.now(timezone.utc)
+    await db_session.execute(
+        update(SiteVisit)
+        .where(SiteVisit.id == visit_id)
+        .values(start_time=now - timedelta(hours=2), end_time=now - timedelta(hours=1))
+    )
+    await db_session.commit()
+    return visit_id
+
+
+async def _lead_status(db_session, lead_id):
+    row = await db_session.execute(
+        select(Lead.lead_status).where(Lead.id == lead_id).execution_options(populate_existing=True)
+    )
+    return row.scalar_one()
+
+
+async def _set_lead_status(db_session, lead_id, status):
+    await db_session.execute(update(Lead).where(Lead.id == lead_id).values(lead_status=status))
+    await db_session.commit()
+
+
+async def _prepare_two_slot_day(client, db_session, seeded_users, project_with_capacity):
+    project, capacity = project_with_capacity
+    capacity.capacity = 8
+    await db_session.commit()
+    target_date = _next_weekday(2)
+    await _add_rule(db_session, executive_id=seeded_users["exec1"].id, day_of_week=target_date.weekday())
+    return project, target_date, await _login(client, ADMIN_EMAIL)
+
+
+async def _book_second(client, headers, project, lead_id, local_time):
+    return await client.post(
+        "/api/v1/bookings",
+        json={
+            "lead_id": str(lead_id),
+            "project_id": str(project.id),
+            "start_time": _slot_start_utc(_next_weekday(2), local_time).isoformat(),
+        },
+        headers=headers,
+    )
+
+
+@pytest.mark.asyncio
+async def test_completed_lead_stays_completed_after_another_booking(
+    client, db_session, seeded_users, project_with_capacity, test_lead
+):
+    project, _, headers = await _prepare_two_slot_day(client, db_session, seeded_users, project_with_capacity)
+    first = await _book_started_visit(client, db_session, headers, project, test_lead.id, time(10, 30))
+    att = await client.post(f"/api/v1/bookings/{first}/attendance", json={"status": "COMPLETED"}, headers=headers)
+    assert att.status_code == 200
+    assert await _lead_status(db_session, test_lead.id) == LeadStatus.VISIT_COMPLETED
+
+    second = await _book_second(client, headers, project, test_lead.id, time(14, 0))
+    assert second.status_code == 201
+    assert await _lead_status(db_session, test_lead.id) == LeadStatus.VISIT_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_cancelling_later_visit_does_not_downgrade_completed_lead(
+    client, db_session, seeded_users, project_with_capacity, test_lead
+):
+    project, _, headers = await _prepare_two_slot_day(client, db_session, seeded_users, project_with_capacity)
+    first = await _book_started_visit(client, db_session, headers, project, test_lead.id, time(10, 30))
+    await client.post(f"/api/v1/bookings/{first}/attendance", json={"status": "COMPLETED"}, headers=headers)
+    second = await _book_second(client, headers, project, test_lead.id, time(14, 0))
+    cancel = await client.post(f"/api/v1/bookings/{second.json()['id']}/cancel", headers=headers)
+    assert cancel.status_code == 200
+    assert await _lead_status(db_session, test_lead.id) == LeadStatus.VISIT_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_no_show_after_completed_does_not_change_lead(
+    client, db_session, seeded_users, project_with_capacity, test_lead
+):
+    project, _, headers = await _prepare_two_slot_day(client, db_session, seeded_users, project_with_capacity)
+    first = await _book_started_visit(client, db_session, headers, project, test_lead.id, time(10, 30))
+    await client.post(f"/api/v1/bookings/{first}/attendance", json={"status": "COMPLETED"}, headers=headers)
+    second = await _book_started_visit(client, db_session, headers, project, test_lead.id, time(14, 0))
+    att = await client.post(f"/api/v1/bookings/{second}/attendance", json={"status": "NO_SHOW"}, headers=headers)
+    assert att.status_code == 200
+    assert await _lead_status(db_session, test_lead.id) == LeadStatus.VISIT_COMPLETED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", [LeadStatus.CONVERTED, LeadStatus.LOST, LeadStatus.OPTED_OUT])
+async def test_terminal_outcomes_survive_booking_and_attendance(
+    client, db_session, seeded_users, project_with_capacity, test_lead, terminal
+):
+    project, _, headers = await _prepare_two_slot_day(client, db_session, seeded_users, project_with_capacity)
+    first = await _book_started_visit(client, db_session, headers, project, test_lead.id, time(10, 30))
+    await _set_lead_status(db_session, test_lead.id, terminal)
+
+    assert (await _book_second(client, headers, project, test_lead.id, time(14, 0))).status_code == 201
+    assert await _lead_status(db_session, test_lead.id) == terminal
+
+    att = await client.post(f"/api/v1/bookings/{first}/attendance", json={"status": "COMPLETED"}, headers=headers)
+    assert att.status_code == 200
+    assert await _lead_status(db_session, test_lead.id) == terminal
+
+
+@pytest.mark.asyncio
+async def test_concurrent_booking_and_attendance_never_regress_lifecycle(
+    client, db_session, seeded_users, project_with_capacity, test_lead
+):
+    """
+    Lead has an attended-able visit (status VISIT_BOOKED) while a second visit is
+    booked at the same moment. Either interleaving must end at VISIT_COMPLETED:
+    booking-first then attendance advances it; attendance-first makes the
+    booking's conditional UPDATE a no-op. VISIT_BOOKED must never win.
+    """
+    project, _, headers = await _prepare_two_slot_day(client, db_session, seeded_users, project_with_capacity)
+    slots = [time(10, 30), time(14, 0), time(15, 30)]
+    for round_no in range(3):
+        first = await _book_started_visit(client, db_session, headers, project, test_lead.id, slots[round_no])
+        await _set_lead_status(db_session, test_lead.id, LeadStatus.VISIT_BOOKED)
+
+        late_slot = [time(11, 30), time(12, 30), time(16, 30)][round_no]
+        attendance, booking = await asyncio.gather(
+            client.post(f"/api/v1/bookings/{first}/attendance", json={"status": "COMPLETED"}, headers=headers),
+            _book_second(client, headers, project, test_lead.id, late_slot),
+        )
+        assert attendance.status_code == 200, attendance.text
+        assert booking.status_code == 201, booking.text
+        assert await _lead_status(db_session, test_lead.id) == LeadStatus.VISIT_COMPLETED
+        await _set_lead_status(db_session, test_lead.id, LeadStatus.NEW)
