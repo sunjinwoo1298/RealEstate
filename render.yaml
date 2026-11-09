@@ -1,0 +1,73 @@
+# Render Blueprint: API + two background workers + Redis. Create with "New > Blueprint" and pick this repo.
+# Secrets marked `sync: false` are asked for in the dashboard (never committed).
+# The embedding model (sentence-transformers + torch) needs about 2 GB of RAM: use the "standard" plan (or larger)
+# for the API. The two workers do not load it and can stay on "starter".
+services:
+  - type: web
+    name: estateflow-api
+    runtime: python
+    plan: standard
+    region: singapore
+    buildCommand: pip install -r backend/requirements.txt
+    preDeployCommand: alembic -c backend/alembic.ini upgrade head
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars: &backend_env
+      - key: PYTHON_VERSION
+        value: 3.9.21
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: estateflow-redis
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: REFRESH_RECOVERY_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FRONTEND_BASE_URL
+        sync: false
+      - key: CUSTOMER_PORTAL_BASE_URL
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: EMAIL_PROVIDER
+        value: log
+      - key: WEBHOOK_SOURCE_SECRETS
+        sync: false
+
+  - type: worker
+    name: estateflow-reminder-worker
+    runtime: python
+    plan: starter
+    region: singapore
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m backend.workers.reminder_worker
+    envVars: *backend_env
+
+  - type: worker
+    name: estateflow-email-worker
+    runtime: python
+    plan: starter
+    region: singapore
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m backend.workers.customer_email_worker
+    envVars: *backend_env
+
+  - type: keyvalue
+    name: estateflow-redis
+    plan: starter
+    region: singapore
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
