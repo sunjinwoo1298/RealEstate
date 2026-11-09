@@ -2,8 +2,8 @@
 title: "EstateFlow AI: Technical Design Document"
 ---
 
-**GitHub:** `<ADD YOUR REPOSITORY URL HERE>`  
-**Live app:** `<ADD YOUR VERCEL URL HERE, if deployed>` (API on Render: `<ADD URL>`)
+**GitHub:** [https://github.com/sunjinwoo1298/RealEstate](https://github.com/sunjinwoo1298/RealEstate)  
+
 
 # 1. What it is
 

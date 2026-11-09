@@ -1,6 +1,6 @@
-# EstateFlow AI backend (Python 3.9+; tested on 3.9.21)
-# CPU-only PyTorch wheels (the default CUDA wheels are ~2 GB and do not fit small hosts)
---extra-index-url https://download.pytorch.org/whl/cpu
+# EstateFlow AI backend dependencies
+# Embeddings are fetched via Hugging Face Serverless API (HF_TOKEN),
+# eliminating the need to install PyTorch or SentenceTransformers on the server.
 
 fastapi==0.128.0
 uvicorn[standard]==0.39.0
@@ -21,7 +21,3 @@ httpx==0.28.1
 groq==0.37.1
 resend==2.26.0
 pypdf==6.0.0
-numpy==1.26.4
-torch==2.5.1
-sentence-transformers==5.1.1
-transformers==4.57.6

@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = Field(default="", description="Groq API key used for all LLM orchestration calls")
     GROQ_MODEL: str = Field(default="openai/gpt-oss-20b", description="Groq chat-completion model id")
     AI_RESPONSE_TIMEOUT_SECONDS: float = Field(default=20.0, description="Max time allowed for the full AI reply pipeline")
+    HF_TOKEN: str = Field(default="", description="Hugging Face API token for remote inference embedding generation")
+    HF_API_URL: Optional[str] = Field(default=None, description="Optional custom Hugging Face inference endpoint URL")
+    HF_EMBEDDING_TIMEOUT_SECONDS: float = Field(default=30.0, description="Timeout in seconds for Hugging Face embedding API requests")
     EMBEDDING_MODEL_NAME: str = Field(
         default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         description="Sentence-transformers model used for knowledge chunk and query embeddings (multilingual, offline)",

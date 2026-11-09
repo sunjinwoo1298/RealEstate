@@ -1,12 +1,11 @@
 # Render Blueprint: API + two background workers + Redis. Create with "New > Blueprint" and pick this repo.
 # Secrets marked `sync: false` are asked for in the dashboard (never committed).
-# The embedding model (sentence-transformers + torch) needs about 2 GB of RAM: use the "standard" plan (or larger)
-# for the API. The two workers do not load it and can stay on "starter".
+# Embeddings are fetched remotely from Hugging Face Inference API via HF_TOKEN, keeping memory usage ~150 MB.
 services:
   - type: web
     name: estateflow-api
     runtime: python
-    plan: standard
+    plan: starter
     region: singapore
     buildCommand: pip install -r backend/requirements.txt
     preDeployCommand: alembic -c backend/alembic.ini upgrade head
@@ -31,6 +30,8 @@ services:
       - key: REFRESH_RECOVERY_KEY
         sync: false
       - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN
         sync: false
       - key: CORS_ORIGINS
         sync: false
