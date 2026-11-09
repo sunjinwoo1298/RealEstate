@@ -32,6 +32,7 @@ from backend.schemas.lead import (
     WebhookLeadPayload,
 )
 from backend.services.csv_import_service import CsvImportService
+from backend.services.first_contact_service import OUTREACH_SOURCES, FirstContactService
 from backend.services.lead_ingestion_service import LeadIngestionService
 from backend.services.lead_service import LeadService
 from backend.services.webhook_security_service import verify_webhook_signature
@@ -176,6 +177,14 @@ async def ingest_webhook_lead(
     db.add(webhook_event)
     await db.commit()
 
+    # Reply straight away so the enquiry is never left waiting (never fails the intake).
+    if source_type in OUTREACH_SOURCES:
+        try:
+            await FirstContactService.send_first_contact(db, ingestion.lead)
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            logger.warning(f"First contact failed for new enquiry: {exc}")
+
     return IngestionResponse(
         lead_id=ingestion.lead.id,
         lead_source_id=ingestion.lead_source.id,
@@ -258,6 +267,23 @@ async def review_potential_duplicate(
         db, match_id, status=payload.status, reviewed_by_id=current_user.id
     )
     return PotentialDuplicatePublic.model_validate(match)
+
+
+@router.post(
+    "/{lead_id}/first-contact",
+    summary="Send the first reply to a lead that has not been contacted yet (simulated channel)",
+)
+async def send_first_contact(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    lead = await LeadService.get_accessible_lead(db, lead_id, current_user)
+    message = await FirstContactService.send_first_contact(db, lead)
+    return {
+        "sent": message is not None,
+        "reason": None if message else "already contacted, opted out, or no contact details",
+    }
 
 
 @router.get("/{lead_id}", response_model=LeadDetailResponse, summary="Get lead detail")

@@ -32,6 +32,8 @@ class ExtractionResult(BaseModel):
     preferred_visit_date: Optional[str] = Field(default=None, description="ISO 8601 date (YYYY-MM-DD) if mentioned")
     wants_human_handoff: bool = False
     wants_site_visit: bool = False
+    preferred_visit_time: Optional[str] = Field(default=None, description='24-hour HH:MM (India time) if a time was named')
+    confirms_visit_booking: bool = False
 
 
 class OrchestratorReply(BaseModel):

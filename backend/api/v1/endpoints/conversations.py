@@ -1,5 +1,6 @@
 from __future__ import annotations
 import uuid
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -15,6 +16,7 @@ from backend.schemas.conversation import ConversationListItem, ConversationListR
 from backend.schemas.handoff import HandoffPublic, HandoffRequestCreate, OwnershipTransitionRequest
 from backend.services.assignment_service import AssignmentService
 from backend.services.conversation_service import ConversationService
+from backend.services.flagged_chat_service import IST, FlaggedChatService
 from backend.services.handoff_service import HandoffService
 from backend.services.lead_service import LeadService
 
@@ -24,11 +26,31 @@ router = APIRouter(prefix="/conversations", tags=["Staff Conversation Workspace"
 @router.get("", response_model=ConversationListResponse, summary="List conversations (staff)")
 async def list_conversations(
     conversation_status: Optional[ConversationStatus] = Query(default=None, alias="status"),
+    flagged: bool = Query(default=False, description="Only chats that tripped a guardrail or escalated (admin/manager)"),
+    flagged_date: Optional[date] = Query(default=None, description="India-time day to review; defaults to today"),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db_session),
     _current_user: User = Depends(get_current_user),
 ) -> ConversationListResponse:
+    if flagged:
+        if _current_user.role not in (UserRole.ADMIN, UserRole.MANAGER):
+            raise ForbiddenException("Only an admin or manager may review flagged chats")
+        day = flagged_date or datetime.now(IST).date()
+        flagged_rows, flagged_total = await FlaggedChatService.list_for_day(db, day=day, limit=limit, offset=offset)
+        return ConversationListResponse(
+            items=[
+                ConversationListItem.model_validate(conversation).model_copy(
+                    update={
+                        "lead_full_name": lead.full_name,
+                        "lead_normalized_phone": lead.normalized_phone,
+                        "flag_reasons": reasons,
+                    }
+                )
+                for conversation, lead, reasons in flagged_rows
+            ],
+            total=flagged_total,
+        )
     rows, total = await ConversationService.list_conversations_staff(
         db, status=conversation_status, limit=limit, offset=offset
     )

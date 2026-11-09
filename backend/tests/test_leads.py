@@ -370,3 +370,109 @@ async def test_new_manual_lead_from_executive_is_assigned_to_them(client, seeded
     detail = await client.get(f"/api/v1/leads/{created.json()['lead_id']}", headers=exec_headers)
     assert detail.status_code == 200
     assert detail.json()["assigned_executive_id"] == exec_id
+
+
+# --- first contact + flagged chats (client brief, round 5) -------------------------------------
+
+
+async def _conversations_for_lead(db_session, lead_id):
+    from sqlalchemy import select
+    from backend.models.conversation import Conversation
+    from backend.models.message import Message
+
+    conversations = (await db_session.execute(select(Conversation).where(Conversation.lead_id == uuid.UUID(lead_id)))).scalars().all()
+    messages = []
+    for conversation in conversations:
+        messages += (await db_session.execute(select(Message).where(Message.conversation_id == conversation.id))).scalars().all()
+    return conversations, messages
+
+
+async def _purge_conversations(db_session):
+    from backend.models.conversation import Conversation
+    from backend.models.message import Message
+
+    await db_session.execute(delete(Message))
+    await db_session.execute(delete(Conversation))
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_portal_enquiry_is_contacted_immediately_once(client, db_session):
+    body = json.dumps({"full_name": "Hardik Patel", "phone": "9444455501", "external_lead_id": "FC-1"}).encode()
+    resp = await client.post("/api/v1/leads/webhooks/website", headers={"X-Webhook-Signature": _sign(body)}, content=body)
+    assert resp.status_code == 201
+    lead_id = resp.json()["lead_id"]
+    try:
+        conversations, messages = await _conversations_for_lead(db_session, lead_id)
+        assert len(conversations) == 1 and len(messages) == 1
+        assert messages[0].extra_metadata["first_contact"] is True
+        assert "Hardik" in messages[0].content and "STOP" in messages[0].content
+        lead = await db_session.get(Lead, uuid.UUID(lead_id))
+        await db_session.refresh(lead)
+        assert lead.lead_status.value == "AI_CONTACTED"
+
+        # a second enquiry from the same buyer must not be greeted again
+        body2 = json.dumps({"full_name": "Hardik Patel", "phone": "9444455501", "external_lead_id": "FC-2"}).encode()
+        again = await client.post("/api/v1/leads/webhooks/website", headers={"X-Webhook-Signature": _sign(body2)}, content=body2)
+        assert again.status_code == 201
+        _, messages_after = await _conversations_for_lead(db_session, lead_id)
+        assert len(messages_after) == 1
+    finally:
+        await _purge_conversations(db_session)
+
+
+@pytest.mark.asyncio
+async def test_no_first_contact_without_consent_or_contact_details(client, db_session):
+    declined = json.dumps({"full_name": "No Consent", "phone": "9444455502", "consent_status": "DECLINED"}).encode()
+    r1 = await client.post("/api/v1/leads/webhooks/website", headers={"X-Webhook-Signature": _sign(declined)}, content=declined)
+    assert r1.status_code == 201
+    try:
+        _, messages = await _conversations_for_lead(db_session, r1.json()["lead_id"])
+        assert messages == []
+    finally:
+        await _purge_conversations(db_session)
+
+
+@pytest.mark.asyncio
+async def test_flagged_chats_are_for_admin_and_manager_only(client, db_session, seeded_users):
+    from backend.models.conversation import ChannelType, Conversation, ConversationLanguage, ConversationState, ConversationStatus
+    from backend.models.message import Message, MessageType, SenderType
+
+    lead = Lead(full_name="Flag Buyer", normalized_phone="+919444455503")
+    db_session.add(lead)
+    await db_session.flush()
+    conversation = Conversation(
+        lead_id=lead.id, channel=ChannelType.WEB_CHAT, status=ConversationStatus.ACTIVE,
+        language=ConversationLanguage.EN, conversation_state=ConversationState.DISCOVERY,
+    )
+    db_session.add(conversation)
+    await db_session.flush()
+    db_session.add(Message(
+        conversation_id=conversation.id, sender_type=SenderType.AI, content="I cannot quote prices.", message_type=MessageType.TEXT,
+        extra_metadata={"guardrail_flags": {"pricing_or_discount_requested": True, "complaint_detected": True}},
+    ))
+    clean = Conversation(
+        lead_id=lead.id, channel=ChannelType.WEB_CHAT, status=ConversationStatus.ACTIVE,
+        language=ConversationLanguage.EN, conversation_state=ConversationState.DISCOVERY,
+    )
+    db_session.add(clean)
+    await db_session.flush()
+    db_session.add(Message(conversation_id=clean.id, sender_type=SenderType.AI, content="Hello", message_type=MessageType.TEXT,
+                           extra_metadata={"guardrail_flags": {"pricing_or_discount_requested": False}}))
+    await db_session.commit()
+    try:
+        manager = await _login(client, MANAGER_EMAIL)
+        listed = await client.get("/api/v1/conversations", headers=manager, params={"flagged": "true"})
+        assert listed.status_code == 200
+        items = listed.json()["items"]
+        assert [i["id"] for i in items] == [str(conversation.id)]  # the unflagged chat is not listed
+        assert set(items[0]["flag_reasons"]) == {"Price or discount ask", "Complaint"}
+
+        exec_headers = await _login(client, EXEC_EMAIL)
+        denied = await client.get("/api/v1/conversations", headers=exec_headers, params={"flagged": "true"})
+        assert denied.status_code == 403
+
+        yesterday = await client.get("/api/v1/conversations", headers=manager, params={"flagged": "true", "flagged_date": "2000-01-01"})
+        assert yesterday.json()["total"] == 0
+    finally:
+        await _purge_conversations(db_session)

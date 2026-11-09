@@ -176,6 +176,7 @@ export interface ConversationPublic {
 export interface ConversationListItem extends ConversationPublic {
   lead_full_name: string;
   lead_normalized_phone: string | null;
+  flag_reasons?: string[];
 }
 
 export interface ConversationListResponse {
@@ -988,11 +989,15 @@ class ApiClient {
 
   async listConversations(params: {
     status?: ConversationStatus;
+    flagged?: boolean;
+    flagged_date?: string;
     limit?: number;
     offset?: number;
   } = {}): Promise<ConversationListResponse> {
     const query = new URLSearchParams();
     if (params.status) query.set("status", params.status);
+    if (params.flagged) query.set("flagged", "true");
+    if (params.flagged_date) query.set("flagged_date", params.flagged_date);
     if (params.limit !== undefined) query.set("limit", String(params.limit));
     if (params.offset !== undefined) query.set("offset", String(params.offset));
     return this.request<ConversationListResponse>(`/conversations?${query.toString()}`, { method: "GET" });

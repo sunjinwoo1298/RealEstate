@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiClient, OverviewAnalytics, ResponseTimeAnalytics } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
-import { ArrowRight, CalendarCheck, Clock, Users, UserCheck, AlarmClock } from "lucide-react";
+import { AlarmClock, ArrowRight, CalendarCheck, Clock, Flag, UserCheck, Users } from "lucide-react";
 
 function formatDuration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return "—";
@@ -20,11 +20,21 @@ export function DashboardOverview() {
   const [overview, setOverview] = useState<OverviewAnalytics | null>(null);
   const [response, setResponse] = useState<ResponseTimeAnalytics | null>(null);
   const [failed, setFailed] = useState(false);
+  const [flaggedToday, setFlaggedToday] = useState<number | null>(null);
+  const canReview = user?.role === "ADMIN" || user?.role === "MANAGER";
 
   useEffect(() => {
     apiClient.getOverviewAnalytics({ range: "LAST_30_DAYS" }).then(setOverview).catch(() => setFailed(true));
     apiClient.getResponseTimeAnalytics({ range: "LAST_30_DAYS" }).then(setResponse).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!canReview) return;
+    apiClient
+      .listConversations({ flagged: true, limit: 1 })
+      .then((r) => setFlaggedToday(r.total))
+      .catch(() => undefined);
+  }, [canReview]);
 
   const visitRate =
     overview && overview.total_unique_leads > 0
@@ -102,6 +112,24 @@ export function DashboardOverview() {
           </div>
         ))}
       </div>
+
+      {canReview && (
+        <Link
+          href="/conversations?flagged=1"
+          className="flex items-center justify-between bg-white p-5 rounded-xl border border-[#E5E5DE] hover:border-[#C5C5BB] transition-colors"
+        >
+          <span className="flex items-center gap-3">
+            <Flag className="w-5 h-5 text-[#C47A55]" />
+            <span>
+              <span className="block font-heading font-semibold text-[#202B28]">
+                {flaggedToday === null ? "Chats flagged today" : `${flaggedToday} chat${flaggedToday === 1 ? "" : "s"} flagged today`}
+              </span>
+              <span className="block text-sm text-[#737C76]">Price asks, complaints, requests for a person. Review them here.</span>
+            </span>
+          </span>
+          <ArrowRight className="w-4 h-4 text-[#9FAAA4]" />
+        </Link>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {[

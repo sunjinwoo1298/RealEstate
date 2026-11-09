@@ -25,7 +25,17 @@ from backend.ai.prompts import (
     build_response_system_prompt,
     format_knowledge_context,
 )
-from backend.ai.visit_slots import build_visit_slots_reply, missing_qualification_details
+from backend.ai.visit_slots import (
+    build_booked_reply,
+    build_confirm_time_reply,
+    build_time_taken_reply,
+    build_visit_slots_reply,
+    missing_qualification_details,
+    pick_slot,
+)
+from backend.core.exceptions import AppException
+from backend.core.location import map_url_for
+from backend.models.project import Project
 from backend.ai.schemas import ExtractionResult, OrchestratorReply
 from backend.ai.tools import AITools, ToolCallLog
 from backend.core.config import settings
@@ -34,7 +44,7 @@ from backend.core.logging import logger
 from backend.core.redis import get_redis_client
 from backend.models.conversation import Conversation, ConversationState, ConversationStatus, OwnershipStatus
 from backend.models.handoff import HandoffReason
-from backend.models.lead import Lead
+from backend.models.lead import ConsentStatus, Lead, LeadStatus
 from backend.models.lead_qualification import LeadQualification
 from backend.models.lead_qualification import ConfigurationType, PurchasePurpose
 from backend.models.message import Message, MessageType, SenderType
@@ -86,6 +96,7 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
 
 
 _IST = ZoneInfo("Asia/Kolkata")
+_OPT_OUT_WORDS = {"stop", "unsubscribe", "opt out", "optout", "stop messaging me"}
 
 
 def _determine_handoff_reason(
@@ -183,6 +194,24 @@ class AIOrchestratorService:
     async def _run_pipeline(
         db: AsyncSession, conversation: Conversation, lead: Lead, buyer_message_text: str
     ) -> OrchestratorResult:
+        if buyer_message_text.strip().lower().strip(".!") in _OPT_OUT_WORDS:
+            # DPDP: honour an opt-out immediately, without calling the LLM.
+            lead.lead_status = LeadStatus.OPTED_OUT
+            lead.consent_status = ConsentStatus.DECLINED
+            stop_message = Message(
+                conversation_id=conversation.id,
+                sender_type=SenderType.AI,
+                sender_id=None,
+                content="You have been opted out and we will not contact you again. If you change your mind, just message us.",
+                message_type=MessageType.TEXT,
+                extra_metadata={"opt_out": True},
+            )
+            db.add(stop_message)
+            conversation.last_message_at = datetime.now(timezone.utc)
+            await db.commit()
+            await db.refresh(stop_message)
+            return OrchestratorResult(ai_message=stop_message)
+
         guardrail_flags = GuardrailFlags(
             prompt_injection_detected=detect_prompt_injection(buyer_message_text),
             pricing_or_discount_requested=detect_pricing_or_discount_request(buyer_message_text),
@@ -293,14 +322,65 @@ class AIOrchestratorService:
                 logger.warning(f"Could not load visit slots for AI reply: {exc}")
                 slots = None
             if slots is not None:
-                final_reply_text = build_visit_slots_reply(
+                project_name = (project_info or {}).get("name") or "the project"
+                slots_reply = build_visit_slots_reply(
                     language=reply_language,
-                    project_name=(project_info or {}).get("name") or "the project",
+                    project_name=project_name,
                     project_id=resolved_project_id,
                     target_date=target_date,
                     slots=slots,
                     portal_base_url=settings.customer_portal_base_url,
                 )
+                hhmm = extraction.preferred_visit_time
+                chosen = pick_slot(slots, target_date, hhmm)
+                if chosen is not None and extraction.confirms_visit_booking:
+                    # Book for real through the transactional booking service; the
+                    # buyer is told it succeeded only after the backend confirms.
+                    try:
+                        visit = await tools.book_site_visit(
+                            lead.id,
+                            resolved_project_id,
+                            chosen.start_time,
+                            idempotency_key=f"chat-{conversation.id}-{chosen.start_time.isoformat()}",
+                        )
+                        project_row = await db.get(Project, resolved_project_id)
+                        final_reply_text = build_booked_reply(
+                            language=reply_language,
+                            project_name=project_name,
+                            target_date=target_date,
+                            start_time=visit.start_time,
+                            booking_reference=visit.booking_reference,
+                            location=project_row.location if project_row else None,
+                            map_url=map_url_for(project_name, project_row.location) if project_row else None,
+                            rera_number=project_row.rera_number if project_row else None,
+                        )
+                        if ConversationState.VISIT_BOOKED in ALLOWED_STATE_TRANSITIONS.get(
+                            conversation.conversation_state, set()
+                        ):
+                            ConversationService.transition_state(conversation, ConversationState.VISIT_BOOKED)
+                    except AppException as exc:
+                        logger.warning(f"Chat booking not completed: {exc}")
+                        final_reply_text = build_time_taken_reply(
+                            language=reply_language,
+                            project_name=project_name,
+                            target_date=target_date,
+                            hhmm=hhmm,
+                            slots_reply=slots_reply,
+                        )
+                elif chosen is not None:
+                    final_reply_text = build_confirm_time_reply(
+                        language=reply_language, project_name=project_name, target_date=target_date, slot=chosen
+                    )
+                elif hhmm:
+                    final_reply_text = build_time_taken_reply(
+                        language=reply_language,
+                        project_name=project_name,
+                        target_date=target_date,
+                        hhmm=hhmm,
+                        slots_reply=slots_reply,
+                    )
+                else:
+                    final_reply_text = slots_reply
 
         handoff_reason = _determine_handoff_reason(extraction, guardrail_flags, retrieved_chunks)
         if handoff_reason is not None:

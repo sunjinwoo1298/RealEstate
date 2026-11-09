@@ -300,6 +300,78 @@ async def test_visit_request_gets_real_slots_not_an_llm_promise(client, db_sessi
 
 
 @pytest.mark.asyncio
+async def test_chat_books_a_confirmed_free_slot_and_only_then_says_so(client, db_session, monkeypatch):
+    import datetime as dt
+    from types import SimpleNamespace
+
+    project = await _create_project(db_session, "chatbook")
+    create_resp = await _create_chat_session(client)
+    conversation_id = create_resp.json()["id"]
+    client.cookies.set("estateflow_buyer_session", create_resp.cookies.get("estateflow_buyer_session"))
+
+    start = dt.datetime(2099, 1, 5, 5, 30, tzinfo=dt.timezone.utc)  # 11:00 IST
+    booked_calls = []
+
+    async def fake_slots(self, project_id, target_date):
+        return [SimpleNamespace(start_time=start, end_time=None, available_executive_count=1)]
+
+    async def fake_book(self, lead_id, project_id, start_time, idempotency_key=None):
+        booked_calls.append((project_id, start_time, idempotency_key))
+        return SimpleNamespace(start_time=start_time, booking_reference="SV-CHAT0001")
+
+    monkeypatch.setattr(orchestrator_module.AITools, "get_available_slots", fake_slots)
+    monkeypatch.setattr(orchestrator_module.AITools, "book_site_visit", fake_book)
+
+    def extraction(confirms):
+        return ExtractionResult(
+            detected_language="EN", intent="SITE_VISIT_REQUEST", mentioned_project_name=project.name, wants_site_visit=True,
+            preferred_visit_date="2099-01-05", preferred_visit_time="11:00", confirms_visit_booking=confirms,
+        )
+
+    async def say(text):
+        resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/messages", json={"content": text})
+        assert resp.status_code == 201
+        items = (await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")).json()["items"]
+        return [m for m in items if m["sender_type"] == "AI"][-1]["content"]
+
+    # 1) a named free time is only proposed: nothing is booked yet
+    _mock_groq(monkeypatch, extraction=extraction(False), reply=OrchestratorReply(reply_text="Sure, booked!", language="EN"))
+    first = await say("Can I come on 5 Jan at 11?")
+    assert "11:00 am is free" in first and "yes" in first.lower() and "Sure, booked" not in first
+    assert booked_calls == []
+
+    # 2) the buyer confirms: the booking service is called and the reference is shown
+    _mock_groq(monkeypatch, extraction=extraction(True), reply=OrchestratorReply(reply_text="ok", language="EN"))
+    second = await say("yes book it")
+    assert len(booked_calls) == 1 and booked_calls[0][1] == start and booked_calls[0][2].startswith("chat-")
+    assert "SV-CHAT0001" in second and "booked for 5 Jan 2099 at 11:00 am" in second
+
+    # 3) a time that is not free is never booked
+    _mock_groq(monkeypatch, extraction=extraction(True).model_copy(update={"preferred_visit_time": "15:00"}),
+               reply=OrchestratorReply(reply_text="ok", language="EN"))
+    third = await say("book 3 pm")
+    assert len(booked_calls) == 1 and "3:00 pm is no longer free" in third
+
+
+@pytest.mark.asyncio
+async def test_stop_opts_the_buyer_out_without_calling_the_llm(client, db_session, monkeypatch):
+    create_resp = await _create_chat_session(client)
+    conversation_id = create_resp.json()["id"]
+    client.cookies.set("estateflow_buyer_session", create_resp.cookies.get("estateflow_buyer_session"))
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("LLM must not be called for an opt-out")
+
+    monkeypatch.setattr(orchestrator_module.GroqClient, "generate_structured", fail_if_called)
+    resp = await client.post(f"/api/v1/chat/conversations/{conversation_id}/messages", json={"content": "STOP"})
+    assert resp.status_code == 201
+    conversation = await db_session.get(Conversation, uuid.UUID(conversation_id))
+    lead = await db_session.get(Lead, conversation.lead_id)
+    await db_session.refresh(lead)
+    assert lead.lead_status.value == "OPTED_OUT" and lead.consent_status.value == "DECLINED"
+
+
+@pytest.mark.asyncio
 async def test_no_ai_response_when_conversation_is_human_owned(client, db_session, monkeypatch):
     create_resp = await _create_chat_session(client)
     conversation_id = create_resp.json()["id"]

@@ -114,10 +114,10 @@ class AITools:
         return slots
 
     async def book_site_visit(
-        self, lead_id: uuid.UUID, project_id: uuid.UUID, start_time: datetime
+        self, lead_id: uuid.UUID, project_id: uuid.UUID, start_time: datetime, idempotency_key: Optional[str] = None
     ) -> SiteVisit:
         visit = await BookingService.book_site_visit(
-            self._db, lead_id=lead_id, project_id=project_id, start_time=start_time
+            self._db, lead_id=lead_id, project_id=project_id, start_time=start_time, idempotency_key=idempotency_key
         )
         self._log.record(
             "book_site_visit",

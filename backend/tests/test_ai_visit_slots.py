@@ -54,3 +54,28 @@ def test_prompts_forbid_promising_visits_and_ask_for_one_missing_detail():
     assert "budget range" in prompt and "exactly ONE" in prompt
     assert "exactly ONE" not in build_response_system_prompt(language="EN", knowledge_context="x")
     assert "TODAY (India, IST) is 2026-11-09" in build_extraction_system_prompt("2026-11-09")
+
+
+def test_pick_slot_matches_only_exact_free_start_in_ist():
+    from backend.ai.visit_slots import build_booked_reply, build_confirm_time_reply, build_time_taken_reply, pick_slot
+
+    slots = [_slot(5, 30), _slot(6, 30)]  # 11:00 and 12:00 IST
+    assert pick_slot(slots, DAY, "11:00") is slots[0]
+    assert pick_slot(slots, DAY, "11:30") is None  # not a free start
+    assert pick_slot(slots, DAY, "nonsense") is None and pick_slot(slots, DAY, None) is None
+    assert "11:00 am is free" in build_confirm_time_reply(language="EN", project_name="P", target_date=DAY, slot=slots[0])
+    done = build_booked_reply(
+        language="EN", project_name="P", target_date=DAY, start_time=slots[0].start_time, booking_reference="SV-1",
+        location="SG Highway", map_url="https://maps", rera_number="RERA-1",
+    )
+    assert "SV-1" in done and "RERA: RERA-1" in done and "reminders 1 day and 2 hours" in done
+    taken = build_time_taken_reply(language="EN", project_name="P", target_date=DAY, hhmm="15:00", slots_reply="Other times: ...")
+    assert "3:00 pm is no longer free" in taken and "Other times" in taken
+
+
+def test_flagged_reasons_cover_guardrails_and_escalations():
+    from backend.services.flagged_chat_service import FlaggedChatService as F
+
+    assert F.reasons_from_metadata(None) == [] and F.reasons_from_metadata({"guardrail_flags": {"complaint_detected": False}}) == []
+    got = F.reasons_from_metadata({"guardrail_flags": {"prompt_injection_detected": True}, "handoff_reason": "UNSUPPORTED_QUERY"})
+    assert got == ["Suspicious instruction", "Escalated to a salesperson"]

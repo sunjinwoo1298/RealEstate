@@ -58,6 +58,7 @@ class SendMessageRequest(BaseModel):
 class ConversationListItem(ConversationPublic):
     lead_full_name: str = ""
     lead_normalized_phone: Optional[str] = None
+    flag_reasons: List[str] = []
 
 
 class ConversationListResponse(BaseModel):
