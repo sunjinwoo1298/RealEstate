@@ -1,4 +1,4 @@
-# EstateFlow AI: running and deploying
+# EstateFlow AI
 
 Repository: https://github.com/sunjinwoo1298/RealEstate · Live app: https://real-estate-phi-lemon.vercel.app
 
