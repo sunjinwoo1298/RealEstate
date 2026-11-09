@@ -239,7 +239,7 @@ class Settings(BaseSettings):
         """Returns allowed CORS origins as a list."""
         if not self.CORS_ORIGINS:
             return ["http://localhost:3000", "http://127.0.0.1:3000"]
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return [origin.strip().rstrip("/") for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     def _format_async_postgres_url(self, raw_url: str) -> str:
         """
